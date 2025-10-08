@@ -1,0 +1,48 @@
+# PR Analyzer Configuration
+# This file configures the AI-powered PR analysis
+
+# Analysis settings
+analysis:
+  # Maximum complexity level to flag (1-5)
+  max_complexity: 4
+  
+  # Whether to include potential risks in analysis
+  include_risks: true
+  
+  # Whether to include complexity rating
+  include_complexity: true
+
+# AI model settings
+ai:
+  # Model to use for analysis
+  model: "claude-3-5-sonnet-20241022"
+  
+  # Maximum tokens for response
+  max_tokens: 1500
+  
+  # Temperature for creativity (0.0-1.0)
+  temperature: 0.2
+
+# File patterns to include/exclude
+files:
+  # Include these file patterns
+  include:
+    - "**/*.ts"
+    - "**/*.tsx"
+    - "**/*.js"
+    - "**/*.jsx"
+    - "**/*.py"
+    - "**/*.java"
+    - "**/*.go"
+    - "**/*.rs"
+  
+  # Exclude these file patterns
+  exclude:
+    - "**/*.test.*"
+    - "**/*.spec.*"
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/*.min.js"
+    - "**/*.bundle.js"
+
