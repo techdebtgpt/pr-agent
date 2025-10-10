@@ -3,6 +3,11 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
