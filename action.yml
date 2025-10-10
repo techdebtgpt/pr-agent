@@ -12,5 +12,5 @@ inputs:
     default: '.pr-analyzer.yml'
 
 runs:
-    using: 'node20'
-    main: 'dist/index.js'
+  using: 'node20'
+  main: 'dist/index.js'
