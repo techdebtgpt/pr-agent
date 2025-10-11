@@ -77,7 +77,7 @@ async function postComment(context: any, prNumber: number, summary: string, repo
       owner: repository.owner.login,
       repo: repository.name,
       issue_number: prNumber,
-      body: `## 🤖 AI Analysis\n\n${summary}`
+      body: `## 🤖 AI Analysis (PR Agent by TechDebtGPT)\n\n${summary}`
     });
   } catch (error) {
     core.error('Error posting comment:');
