@@ -14,9 +14,8 @@ PR Agent analyzes your pull requests and provides:
 
 Before setting up PR Agent in your project, you'll need:
 
-1. **Node.js**: Version 18.0.0 or higher
-2. **Anthropic API Key**: Sign up at [Anthropic Console](https://console.anthropic.com/) to get your API key
-3. **GitHub Repository**: With permissions to add workflows and secrets
+1. **Anthropic API Key**: Sign up at [Anthropic Console](https://console.anthropic.com/) to get your API key
+2. **GitHub Repository**: With permissions to add workflows and secrets
 
 ## Setup Instructions
 
@@ -33,33 +32,30 @@ You have two options:
 
 2. Create `.github/workflows/pr-agent.yml`:
    ```yaml
-   name: PR Analysis
-   
+   name: PR Analyzer
    on:
      pull_request:
        types: [opened, synchronize, reopened]
    
+   permissions:
+     pull-requests: write
+     issues: write
+     contents: read
+   
    jobs:
      analyze:
        runs-on: ubuntu-latest
-       permissions:
-         contents: read
-         pull-requests: write
-       
        steps:
-         - name: Checkout PR Agent
-           uses: actions/checkout@v4
+         - uses: actions/checkout@v4
+   
+         - name: Run PR Analyzer
+           uses: ./
            with:
-             repository: YOUR_USERNAME/pr-agent
-             path: pr-agent
-         
-         - name: Run PR Analysis
-           uses: ./pr-agent
-           with:
-             config-path: '.pr-analyzer.yml'  # optional
+             config-path: .pr-analyzer.yml
            env:
              ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
    ```
 
 #### Option B: Clone and customize locally
@@ -83,20 +79,6 @@ Add your Anthropic API key to your repository secrets:
 6. Click **Add secret**
 
 > **Note**: `GITHUB_TOKEN` is automatically provided by GitHub Actions, no manual setup required.
-
-### Step 3: Set Permissions
-
-Ensure your workflow has the necessary permissions:
-
-In your workflow file, include:
-```yaml
-permissions:
-  contents: read
-  pull-requests: write
-```
-
-This allows the action to read PR content and post comments.
-
 
 ## Usage
 
@@ -158,10 +140,9 @@ npm install
 ### 3. Build the Project
 
 ```bash
-npm run build
-# or
-npx tsc
+npm run build:action
 ```
+Creates the `dist/` directory that is neccessary for the build to run
 
 ### 4. Test Locally
 
@@ -169,8 +150,7 @@ To test the action locally, you can:
 
 1. Set environment variables:
    ```bash
-   export ANTHROPIC_API_KEY="your-api-key"
-   export GITHUB_TOKEN="your-github-token"
+   ANTHROPIC_API_KEY="your-api-key"
    ```
 
 2. Create a test PR in a repository you own
@@ -187,6 +167,7 @@ pr-agent/
 │   └── index.ts       # Additional exports
 ├── dist/              # Compiled JavaScript (generated)
 ├── action.yml         # GitHub Action configuration
+├── .pr-analyzer.yml   # PR Analyzer file configuration
 ├── package.json       # Node.js dependencies
 ├── tsconfig.json      # TypeScript configuration
 └── README.md          # This file
