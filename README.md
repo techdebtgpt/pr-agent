@@ -49,7 +49,7 @@ You have two options:
          - uses: actions/checkout@v4
    
          - name: Run PR Analyzer
-           uses: ./
+           uses: techdebtgpt/pr-agent@v1.0.1
            with:
              config-path: .pr-analyzer.yml
            env:
