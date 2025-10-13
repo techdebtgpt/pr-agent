@@ -40483,7 +40483,7 @@ async function postComment(context, prNumber, summary, repository, ghToken) {
             owner: repository.owner.login,
             repo: repository.name,
             issue_number: prNumber,
-            body: `## 🤖 AI Analysis\n\n${summary}`
+            body: `## 🤖 AI Analysis (PR Agent by TechDebtGPT)\n\n${summary}`
         });
     }
     catch (error) {
