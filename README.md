@@ -2,6 +2,8 @@
 
 An AI-powered GitHub Action that automatically analyzes pull requests using Claude AI and provides intelligent code review insights, risk assessments, and complexity ratings.
 
+🎥 [Watch the setup tutorial on YouTube](https://youtu.be/RHMAhUe6ghk)
+
 ## Overview
 
 PR Agent analyzes your pull requests and provides:
@@ -20,10 +22,6 @@ Before setting up PR Agent in your project, you'll need:
 ## Setup Instructions
 
 ### Step 1: Add PR Agent to Your Repository
-
-You have two options:
-
-#### Option A: Use as a GitHub Action from marketplace (recommended)
 
 1. Create a workflow file in your repository:
    ```bash
@@ -57,15 +55,6 @@ You have two options:
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
    ```
-
-#### Option B: Clone and customize locally
-
-1. Clone this repository into your project:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/pr-agent.git .github/pr-agent
-   ```
-
-2. Create `.github/workflows/pr-agent.yml` as shown above, adjusting the path accordingly.
 
 ### Step 2: Configure Secrets
 
