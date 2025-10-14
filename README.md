@@ -2,7 +2,7 @@
 
 An AI-powered GitHub Action that automatically analyzes pull requests using Claude AI and provides intelligent code review insights, risk assessments, and complexity ratings.
 
-🎥 [Watch the setup tutorial on YouTube](https://youtu.be/RHMAhUe6ghk)
+🎥 [Watch the setup tutorial on YouTube](https://youtu.be/jCdFwLJIzEU)
 
 ## Overview
 
