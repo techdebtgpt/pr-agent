@@ -71,6 +71,83 @@ Add your Anthropic API key to your repository secrets:
 
 ## Usage
 
+### CLI Tool
+
+PR Agent can also be used as a CLI tool locally to analyze your changes before pushing.
+
+#### Installation
+
+```bash
+npm install -g pr-agent
+```
+
+Or use it locally in your project:
+```bash
+npm install pr-agent --save-dev
+```
+
+#### CLI Commands
+
+**Analyze with full report** (summary, risks, and complexity):
+```bash
+pr-agent --analyze --full
+```
+
+**Get only a summary**:
+```bash
+pr-agent --analyze --summary
+```
+
+**Get only potential risks**:
+```bash
+pr-agent --analyze --risks
+```
+
+**Get only complexity rating**:
+```bash
+pr-agent --analyze --complexity
+```
+
+#### Advanced CLI Usage
+
+**Analyze staged changes**:
+```bash
+pr-agent --staged --analyze --full
+```
+
+**Analyze against a specific branch**:
+```bash
+pr-agent --branch develop --analyze --full
+```
+
+**Analyze a specific diff file**:
+```bash
+pr-agent --file path/to/diff.patch --analyze --full
+```
+
+**Provide a custom diff**:
+```bash
+pr-agent --diff "$(git diff main)" --analyze --summary
+```
+
+**Add a PR title for better context**:
+```bash
+pr-agent --title "Add authentication feature" --analyze --full
+```
+
+#### Environment Setup
+
+Set your Anthropic API key:
+```bash
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+The CLI will automatically:
+- Get the git diff from `origin/main` (falls back to `main` if origin/main doesn't exist)
+- Extract the PR title from the latest commit
+- Use Claude AI to analyze the changes
+- Handle large diffs with increased buffer size (200MB limit)
+
 ### Automatic Analysis
 
 Once set up, PR Agent automatically runs on:
@@ -152,6 +229,7 @@ pr-agent/
 ├── src/
 │   ├── action.ts      # Main GitHub Action entry point
 │   ├── analyzer.ts    # Claude AI integration
+│   ├── cli.ts         # CLI tool entry point
 │   ├── types.ts       # TypeScript type definitions
 │   └── index.ts       # Additional exports
 ├── dist/              # Compiled JavaScript (generated)
@@ -191,11 +269,31 @@ pr-agent/
 - Verify the API key has not expired
 - Review Action logs for detailed error messages
 
-### Large PRs
+### Large PRs / Rate Limits
 
-- For very large PRs, the diff might exceed token limits
-- Consider breaking large PRs into smaller, focused changes
-- Future versions will include diff size limits and chunking
+If you encounter rate limit errors:
+
+**Automatic Protection:**
+- Diffs over 100KB are automatically truncated to prevent rate limit errors
+- The tool warns you when truncation occurs
+
+**Solutions:**
+1. **Use staged changes** (analyzes only what you're about to commit):
+   ```bash
+   pr-agent --staged --analyze --full
+   ```
+
+2. **Break into smaller PRs**: Large PRs are harder to review anyway
+
+3. **Wait and retry**: Rate limits reset after a few minutes
+
+4. **Analyze specific files**:
+   ```bash
+   git diff main -- path/to/file.ts > mydiff.patch
+   pr-agent --file mydiff.patch --analyze --full
+   ```
+
+The tool automatically estimates token usage and warns you before making API calls.
 
 
 ## Contributing

@@ -1,0 +1,39 @@
+# Source files
+src/
+*.ts
+
+# Build artifacts
+*.tsbuildinfo
+
+# Node modules
+node_modules/
+
+# Development files
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+test/
+*.test.ts
+*.spec.ts
+
+# CI
+.github/
+
+# Examples
+example/
+
+# Docs (we want to keep README.md and LICENSE)
+docs/
