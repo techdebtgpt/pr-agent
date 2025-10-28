@@ -40,6 +40,13 @@ async function run() {
     // Analyze with Claude
     const summary = await analyzeWithClaude(diff, pr.title, apiKey);
 
+    // If the analyzer returns a known failure message or an empty/falsy summary,
+    const failurePatterns = [/sorry, ai analysis is temporarily unavailable/i, /^analysis failed$/i];
+    if (!summary || summary.trim().length === 0 || failurePatterns.some(rx => rx.test(summary))) {
+      core.setFailed(`Analyzer failed: ${summary ?? 'no summary returned'}`);
+      return;
+    }
+
     // Post comment
     await postComment(context, pr.number, summary, repository!, ghToken);
 
