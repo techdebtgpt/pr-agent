@@ -40498,61 +40498,649 @@ run();
 /***/ }),
 
 /***/ 8561:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
+// Multi-Provider AI Analyzer
+// Refactored to support multiple AI providers through factory pattern
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isProviderAvailable = exports.getAvailableProviders = void 0;
 exports.analyzeWithClaude = analyzeWithClaude;
-const sdk_1 = __importDefault(__nccwpck_require__(121));
+exports.analyzePR = analyzePR;
+exports.analyzePRWithConfig = analyzePRWithConfig;
+const factory_1 = __nccwpck_require__(8016);
+// Legacy function for backward compatibility
 async function analyzeWithClaude(diff, title, apiKey) {
-    const anthropic = new sdk_1.default({
-        apiKey: apiKey,
-    });
+    const config = {
+        provider: 'claude',
+        model: 'claude-3-5-sonnet-20241022',
+        maxTokens: 1500,
+        temperature: 0.2,
+        apiKey: apiKey
+    };
     try {
-        const prompt = `
-            [ROLE] You are an expert software engineer and code reviewer. Your task is to analyze a GitHub pull request (PR) and provide a clear, actionable summary for reviewers.
-    
-            [CONTEXT] 
-            The following is the diff of the PR that needs reviewing:
-            ${diff}
-            ${title ? `PR Title: ${title}` : ''}
-            
-            [TASK] Analyze the PR and provide a concise, structured response following the guidelines below.
-            
-            [GUIDELINES]
-            1. Provide a **Summary**: briefly describe what the change does and its purpose.
-            2. Identify **Potential Risks**: list possible bugs, edge cases, or issues. Write "None" if no risks are apparent.
-            3. Rate **Complexity (1–5)**:
-               - 1 = trivial (small, safe, no risk)  
-               - 3 = moderate (requires some attention, medium risk)  
-               - 5 = very complex (large change, high risk, needs deep review)
-            4. Keep the response under 200 words.
-            5. Focus on clarity and actionable insights relevant for reviewers.
-            6. Reference specific files or sections in the diff if needed.
-            7. Use Markdown for formatting.
-            8. Do not include generic introductions like "Let's analyze this PR".
-            9. Start directly with the analysis and be detailed.
-           `;
-        const response = await anthropic.messages.create({
-            model: 'claude-3-5-sonnet-20241022',
-            max_tokens: 1500,
-            temperature: 0.2,
-            messages: [{ role: 'user', content: prompt }]
-        });
-        const text = response.content
-            .filter((block) => block.type === 'text')
-            .map(block => block.text)
-            .join('');
-        return text || 'Analysis failed';
+        const provider = (0, factory_1.createProvider)(config);
+        const request = { diff, title };
+        const response = await provider.analyze(request);
+        return formatAnalysisResponse(response);
     }
     catch (error) {
         console.error('Claude analysis failed:', error);
         return 'Sorry, AI analysis is temporarily unavailable.';
     }
+}
+/**
+ * Analyze PR with configurable provider
+ */
+async function analyzePR(diff, title, config, repository, prNumber) {
+    // Validate input
+    if (!diff || typeof diff !== 'string') {
+        throw new Error('Diff must be a non-empty string');
+    }
+    if (!config) {
+        // Default to Claude if no config provided
+        config = {
+            provider: 'claude',
+            model: 'claude-3-5-sonnet-20241022',
+            maxTokens: 1500,
+            temperature: 0.2
+        };
+    }
+    const provider = (0, factory_1.createProvider)(config);
+    const request = {
+        diff,
+        title,
+        repository,
+        prNumber
+    };
+    return await provider.analyze(request);
+}
+/**
+ * Analyze PR using configuration file
+ */
+async function analyzePRWithConfig(diff, title, prConfig, repository, prNumber, fallbackProviders) {
+    // Validate input
+    if (!diff || typeof diff !== 'string') {
+        throw new Error('Diff must be a non-empty string');
+    }
+    if (!prConfig) {
+        // Use default configuration
+        const response = await analyzePR(diff, title, undefined, repository, prNumber);
+        return {
+            ...response,
+            provider: response.provider,
+            model: response.model
+        };
+    }
+    const providersToTry = [
+        prConfig.ai.provider,
+        ...(fallbackProviders || prConfig.ai.fallbackProviders || [])
+    ];
+    // Remove duplicates
+    const uniqueProviders = Array.from(new Set(providersToTry));
+    if (uniqueProviders.length === 0) {
+        throw new Error('No providers configured');
+    }
+    let lastError = null;
+    const failedProviders = [];
+    for (const providerType of uniqueProviders) {
+        try {
+            console.info(`Attempting analysis with provider: ${providerType}`);
+            const provider = (0, factory_1.createProviderFromConfig)(prConfig, providerType);
+            const request = {
+                diff,
+                title,
+                repository,
+                prNumber
+            };
+            const response = await provider.analyze(request);
+            console.info(`Successfully analyzed with ${providerType}`);
+            return {
+                ...response,
+                provider: response.provider,
+                model: response.model,
+                tokensUsed: response.tokensUsed,
+                recommendations: response.recommendations
+            };
+        }
+        catch (error) {
+            failedProviders.push(providerType);
+            console.warn(`Provider ${providerType} failed:`, error);
+            lastError = error;
+            continue;
+        }
+    }
+    throw new Error(`All providers failed (${failedProviders.join(', ')}). Last error: ${lastError?.message}`);
+}
+/**
+ * Format analysis response for backward compatibility
+ */
+function formatAnalysisResponse(response) {
+    let formatted = `### Summary\n${response.summary}\n\n`;
+    if (response.risks.length > 0) {
+        formatted += `### Potential Risks\n`;
+        response.risks.forEach(risk => {
+            formatted += `- ${risk}\n`;
+        });
+        formatted += '\n';
+    }
+    else {
+        formatted += `### Potential Risks\nNone\n\n`;
+    }
+    formatted += `### Complexity: ${response.complexity}/5\n`;
+    if (response.recommendations && response.recommendations.length > 0) {
+        formatted += `\n### Recommendations\n`;
+        response.recommendations.forEach(rec => {
+            formatted += `- ${rec}\n`;
+        });
+    }
+    return formatted;
+}
+/**
+ * Get available providers
+ */
+var factory_2 = __nccwpck_require__(8016);
+Object.defineProperty(exports, "getAvailableProviders", ({ enumerable: true, get: function () { return factory_2.getAvailableProviders; } }));
+Object.defineProperty(exports, "isProviderAvailable", ({ enumerable: true, get: function () { return factory_2.isProviderAvailable; } }));
+
+
+/***/ }),
+
+/***/ 1789:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// Base AI Provider Interface
+// Abstract base class that all AI providers must implement
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BaseAIProvider = void 0;
+const constants_1 = __nccwpck_require__(9319);
+class BaseAIProvider {
+    config;
+    apiKey;
+    promptCache = new Map();
+    constructor(config) {
+        this.config = config;
+        this.apiKey = config.apiKey || this.getApiKeyFromEnv();
+        if (!this.apiKey) {
+            throw new Error(`API key is required for ${config.provider} provider`);
+        }
+        // Validate API key format (basic check)
+        if (this.apiKey.length < constants_1.PROVIDER_CONSTANTS.MIN_API_KEY_LENGTH) {
+            throw new Error(`Invalid API key format for ${config.provider} provider`);
+        }
+    }
+    /**
+     * Build the analysis prompt for this provider
+     * Can be overridden by providers to optimize for their specific format
+     */
+    buildPrompt(request) {
+        // Input validation
+        if (!request.diff || request.diff.trim().length === 0) {
+            throw new Error('Diff is required and cannot be empty');
+        }
+        if (request.diff.length > constants_1.PROVIDER_CONSTANTS.MAX_DIFF_SIZE_BYTES) {
+            throw new Error(`Diff is too large (>${constants_1.PROVIDER_CONSTANTS.MAX_DIFF_SIZE_BYTES / 1000000}MB)`);
+        }
+        return `
+[ROLE] You are an expert software engineer and code reviewer. Your task is to analyze a GitHub pull request (PR) and provide a clear, actionable summary for reviewers.
+
+[CONTEXT] 
+The following is the diff of the PR that needs reviewing:
+${request.diff}
+${request.title ? `PR Title: ${request.title}` : ''}
+${request.repository ? `Repository: ${request.repository}` : ''}
+${request.prNumber ? `PR Number: #${request.prNumber}` : ''}
+
+[TASK] Analyze the PR and provide a concise, structured response following the guidelines below.
+
+[GUIDELINES]
+1. Provide a **Summary**: briefly describe what the change does and its purpose.
+2. Identify **Potential Risks**: list possible bugs, edge cases, or issues. Write "None" if no risks are apparent.
+3. Rate **Complexity (1–5)**:
+   - 1 = trivial (small, safe, no risk)  
+   - 3 = moderate (requires some attention, medium risk)  
+   - 5 = very complex (large change, high risk, needs deep review)
+4. Keep the response under 200 words.
+5. Focus on clarity and actionable insights relevant for reviewers.
+6. Reference specific files or sections in the diff if needed.
+7. Use Markdown for formatting.
+8. Do not include generic introductions like "Let's analyze this PR".
+9. Start directly with the analysis and be detailed.
+    `.trim();
+    }
+    /**
+     * Parse the AI response into structured format
+     * Can be overridden by providers if they need custom parsing
+     */
+    parseResponse(response) {
+        // Default parsing logic - extract summary, risks, and complexity
+        const summaryMatch = response.match(/\*\*Summary\*\*:?\s*(.*?)(?=\*\*|$)/is);
+        const risksMatch = response.match(/\*\*Potential Risks\*\*:?\s*(.*?)(?=\*\*|$)/is);
+        const complexityMatch = response.match(/\*\*Complexity.*?(\d+)/i);
+        const summary = summaryMatch?.[1]?.trim() || response.substring(0, 200);
+        // Parse risks - look for bullet points or numbered lists
+        const risksText = risksMatch?.[1]?.trim() || '';
+        const risks = risksText.toLowerCase().includes('none') ? [] :
+            risksText.split(/\n\s*[-•*]\s+|\n\s*\d+\.\s+/)
+                .filter(risk => risk.trim().length > 0)
+                .map(risk => risk.trim().replace(/^[-•*]\s+|\d+\.\s+/, ''));
+        const complexity = complexityMatch ? parseInt(complexityMatch[1]) : 3;
+        return {
+            summary,
+            risks,
+            complexity: Math.max(1, Math.min(5, complexity)) // Ensure 1-5 range
+        };
+    }
+    /**
+     * Handle provider-specific errors
+     */
+    handleError(error) {
+        const providerError = new Error(`${this.getProviderType()} provider error: ${error.message}`);
+        providerError.provider = this.getProviderType();
+        providerError.originalError = error;
+        throw providerError;
+    }
+    /**
+     * Check if the diff is too large for the provider's context window
+     */
+    isDiffTooLarge(diff) {
+        const capabilities = this.getCapabilities();
+        const estimatedTokens = Math.ceil(diff.length / constants_1.PROVIDER_CONSTANTS.CHARS_PER_TOKEN);
+        return estimatedTokens > (capabilities.maxContextLength * constants_1.PROVIDER_CONSTANTS.CONTEXT_USAGE_RATIO);
+    }
+    /**
+     * Truncate diff if it's too large
+     */
+    truncateDiff(diff) {
+        const capabilities = this.getCapabilities();
+        const maxChars = Math.floor(capabilities.maxContextLength *
+            constants_1.PROVIDER_CONSTANTS.CONTEXT_USAGE_RATIO *
+            constants_1.PROVIDER_CONSTANTS.CHARS_PER_TOKEN);
+        if (diff.length <= maxChars) {
+            return diff;
+        }
+        const truncated = diff.substring(0, maxChars);
+        return truncated + '\n\n[... diff truncated due to size limits ...]';
+    }
+    /**
+     * Clear prompt cache (useful for testing)
+     */
+    clearPromptCache() {
+        this.promptCache.clear();
+    }
+    /**
+     * Get cache size (useful for monitoring)
+     */
+    getPromptCacheSize() {
+        return this.promptCache.size;
+    }
+}
+exports.BaseAIProvider = BaseAIProvider;
+
+
+/***/ }),
+
+/***/ 8458:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+// Claude AI Provider Implementation
+// Anthropic Claude integration for PR analysis
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ClaudeProvider = void 0;
+const sdk_1 = __importDefault(__nccwpck_require__(121));
+const base_1 = __nccwpck_require__(1789);
+class ClaudeProvider extends base_1.BaseAIProvider {
+    anthropic;
+    constructor(config) {
+        super(config);
+        this.anthropic = new sdk_1.default({
+            apiKey: this.apiKey,
+            baseURL: config.baseUrl
+        });
+    }
+    getProviderType() {
+        return 'claude';
+    }
+    getApiKeyFromEnv() {
+        return process.env.ANTHROPIC_API_KEY || '';
+    }
+    async analyze(request) {
+        try {
+            // Validate request
+            if (!request || !request.diff) {
+                throw new Error('Invalid analysis request: diff is required');
+            }
+            // Check if diff is too large (use copy to avoid mutation)
+            let processedDiff = request.diff;
+            if (this.isDiffTooLarge(processedDiff)) {
+                console.warn('Diff is too large, truncating...');
+                processedDiff = this.truncateDiff(processedDiff);
+            }
+            const analysisRequest = { ...request, diff: processedDiff };
+            const prompt = this.buildPrompt(analysisRequest);
+            const response = await this.anthropic.messages.create({
+                model: this.config.model,
+                max_tokens: this.config.maxTokens,
+                temperature: this.config.temperature,
+                messages: [{ role: 'user', content: prompt }]
+            });
+            const text = response.content
+                .filter((block) => block.type === 'text')
+                .map(block => block.text)
+                .join('');
+            if (!text) {
+                throw new Error('Empty response from Claude');
+            }
+            const parsed = this.parseResponse(text);
+            return {
+                ...parsed,
+                provider: this.getProviderType(),
+                model: this.config.model,
+                tokensUsed: response.usage?.input_tokens ?
+                    response.usage.input_tokens + (response.usage.output_tokens || 0) :
+                    undefined
+            };
+        }
+        catch (error) {
+            console.error(`Claude provider error:`, {
+                status: error.status,
+                message: error.message,
+                model: this.config.model
+            });
+            // Handle Claude-specific errors
+            if (error.status === 429) {
+                const rateLimitError = new Error(`Claude rate limit exceeded: ${error.message}`);
+                rateLimitError.provider = this.getProviderType();
+                rateLimitError.retryable = true;
+                rateLimitError.rateLimited = true;
+                rateLimitError.retryAfter = error.headers?.['retry-after'];
+                throw rateLimitError;
+            }
+            if (error.status === 401) {
+                const authError = new Error(`Claude authentication failed: Invalid API key`);
+                authError.provider = this.getProviderType();
+                authError.retryable = false;
+                throw authError;
+            }
+            if (error.status >= 500) {
+                const serverError = new Error(`Claude server error: ${error.message}`);
+                serverError.provider = this.getProviderType();
+                serverError.retryable = true;
+                throw serverError;
+            }
+            this.handleError(error);
+        }
+    }
+    async validateConfig() {
+        try {
+            // Test with a minimal request
+            await this.anthropic.messages.create({
+                model: this.config.model,
+                max_tokens: 10,
+                messages: [{ role: 'user', content: 'Hello' }]
+            });
+            return true;
+        }
+        catch (error) {
+            console.error('Claude config validation failed:', error);
+            return false;
+        }
+    }
+    getModelInfo() {
+        const modelConfigs = {
+            'claude-3-5-sonnet-20241022': {
+                name: 'Claude 3.5 Sonnet',
+                maxTokens: 200000,
+                costPer1kTokens: { input: 0.003, output: 0.015 },
+                capabilities: {
+                    maxContextLength: 200000,
+                    supportsImages: true,
+                    supportsStreaming: true,
+                    supportsFunctionCalling: true,
+                    rateLimitRpm: 4000,
+                    rateLimitTpm: 400000
+                }
+            },
+            'claude-3-sonnet-20240229': {
+                name: 'Claude 3 Sonnet',
+                maxTokens: 200000,
+                costPer1kTokens: { input: 0.003, output: 0.015 },
+                capabilities: {
+                    maxContextLength: 200000,
+                    supportsImages: true,
+                    supportsStreaming: true,
+                    supportsFunctionCalling: true,
+                    rateLimitRpm: 4000,
+                    rateLimitTpm: 400000
+                }
+            },
+            'claude-3-haiku-20240307': {
+                name: 'Claude 3 Haiku',
+                maxTokens: 200000,
+                costPer1kTokens: { input: 0.00025, output: 0.00125 },
+                capabilities: {
+                    maxContextLength: 200000,
+                    supportsImages: true,
+                    supportsStreaming: true,
+                    supportsFunctionCalling: true,
+                    rateLimitRpm: 4000,
+                    rateLimitTpm: 400000
+                }
+            }
+        };
+        return modelConfigs[this.config.model] || {
+            name: this.config.model,
+            maxTokens: 200000,
+            capabilities: {
+                maxContextLength: 200000,
+                supportsImages: false,
+                supportsStreaming: true,
+                supportsFunctionCalling: false
+            }
+        };
+    }
+    getCapabilities() {
+        return this.getModelInfo().capabilities;
+    }
+    /**
+     * Claude-optimized prompt building
+     */
+    buildPrompt(request) {
+        return `
+Human: You are an expert software engineer and code reviewer. Your task is to analyze a GitHub pull request (PR) and provide a clear, actionable summary for reviewers.
+
+The following is the diff of the PR that needs reviewing:
+${request.diff}
+${request.title ? `PR Title: ${request.title}` : ''}
+${request.repository ? `Repository: ${request.repository}` : ''}
+${request.prNumber ? `PR Number: #${request.prNumber}` : ''}
+
+Analyze the PR and provide a concise, structured response following these guidelines:
+
+1. Provide a **Summary**: briefly describe what the change does and its purpose.
+2. Identify **Potential Risks**: list possible bugs, edge cases, or issues. Write "None" if no risks are apparent.
+3. Rate **Complexity (1–5)**:
+   - 1 = trivial (small, safe, no risk)  
+   - 3 = moderate (requires some attention, medium risk)  
+   - 5 = very complex (large change, high risk, needs deep review)
+4. Keep the response under 200 words.
+5. Focus on clarity and actionable insights relevant for reviewers.
+6. Reference specific files or sections in the diff if needed.
+7. Use Markdown for formatting.
+8. Do not include generic introductions like "Let's analyze this PR".
+9. Start directly with the analysis and be detailed.`;
+    }
+}
+exports.ClaudeProvider = ClaudeProvider;
+
+
+/***/ }),
+
+/***/ 9319:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+// Provider Constants
+// Centralized constants for AI providers
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MODEL_DEFAULTS = exports.PROVIDER_CONSTANTS = void 0;
+exports.PROVIDER_CONSTANTS = {
+    // Token estimation (rough approximation: 1 token ≈ 4 characters)
+    CHARS_PER_TOKEN: 4,
+    // Context window usage (use 80% to leave room for response)
+    CONTEXT_USAGE_RATIO: 0.8,
+    // Diff size limits
+    MAX_DIFF_SIZE_BYTES: 1000000, // 1MB
+    MIN_API_KEY_LENGTH: 10,
+    // Validation limits
+    MAX_VALIDATION_TOKENS: 10,
+    MIN_DIFF_LENGTH: 1,
+    // Default timeouts (in milliseconds)
+    DEFAULT_TIMEOUT: 30000, // 30 seconds
+    VALIDATION_TIMEOUT: 10000, // 10 seconds
+    // Retry configuration
+    MAX_RETRIES: 3,
+    RETRY_DELAY_MS: 1000,
+    EXPONENTIAL_BACKOFF_FACTOR: 2
+};
+exports.MODEL_DEFAULTS = {
+    claude: {
+        model: 'claude-3-5-sonnet-20241022',
+        maxTokens: 1500,
+        temperature: 0.2
+    },
+    openai: {
+        model: 'gpt-4-turbo',
+        maxTokens: 1500,
+        temperature: 0.2
+    },
+    gemini: {
+        model: 'gemini-pro',
+        maxTokens: 1500,
+        temperature: 0.2
+    }
+};
+
+
+/***/ }),
+
+/***/ 8016:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// AI Provider Factory
+// Factory pattern for creating and managing AI providers
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerProvider = registerProvider;
+exports.createProvider = createProvider;
+exports.createProviderFromConfig = createProviderFromConfig;
+exports.getAvailableProviders = getAvailableProviders;
+exports.isProviderAvailable = isProviderAvailable;
+exports.validateProviderConfig = validateProviderConfig;
+exports.getDefaultConfig = getDefaultConfig;
+const claude_1 = __nccwpck_require__(8458);
+const constants_1 = __nccwpck_require__(9319);
+// Provider registry - will be populated as providers are implemented
+const PROVIDER_REGISTRY = new Map();
+// Register available providers
+registerProvider('claude', claude_1.ClaudeProvider);
+/**
+ * Register a provider class with the factory
+ */
+function registerProvider(type, providerClass) {
+    PROVIDER_REGISTRY.set(type, providerClass);
+}
+/**
+ * Create an AI provider instance based on configuration
+ */
+function createProvider(config) {
+    // Validate configuration
+    if (!config) {
+        throw new Error('Provider configuration is required');
+    }
+    if (!config.provider) {
+        throw new Error('Provider type is required in configuration');
+    }
+    if (!config.model) {
+        throw new Error('Model is required in provider configuration');
+    }
+    if (typeof config.maxTokens !== 'number' || config.maxTokens <= 0) {
+        throw new Error('maxTokens must be a positive number');
+    }
+    if (typeof config.temperature !== 'number' || config.temperature < 0 || config.temperature > 2) {
+        throw new Error('temperature must be a number between 0 and 2');
+    }
+    const ProviderClass = PROVIDER_REGISTRY.get(config.provider);
+    if (!ProviderClass) {
+        const availableProviders = Array.from(PROVIDER_REGISTRY.keys()).join(', ');
+        console.error(`Failed to create provider: '${config.provider}' not found. Available: ${availableProviders}`);
+        throw new Error(`Provider '${config.provider}' is not registered. Available providers: ${availableProviders}`);
+    }
+    console.info(`Creating ${config.provider} provider with model: ${config.model}`);
+    return new ProviderClass(config);
+}
+/**
+ * Create provider from PR analyzer configuration
+ */
+function createProviderFromConfig(prConfig, providerType) {
+    const targetProvider = providerType || prConfig.ai.provider;
+    const providerConfig = prConfig.ai.providers[targetProvider];
+    if (!providerConfig) {
+        throw new Error(`No configuration found for provider '${targetProvider}'`);
+    }
+    const aiProviderConfig = {
+        provider: targetProvider,
+        model: providerConfig.model,
+        maxTokens: providerConfig.maxTokens,
+        temperature: providerConfig.temperature,
+        baseUrl: providerConfig.baseUrl,
+        timeout: providerConfig.timeout
+    };
+    return createProvider(aiProviderConfig);
+}
+/**
+ * Get list of available providers
+ */
+function getAvailableProviders() {
+    return Array.from(PROVIDER_REGISTRY.keys());
+}
+/**
+ * Check if a provider is available
+ */
+function isProviderAvailable(provider) {
+    return PROVIDER_REGISTRY.has(provider);
+}
+/**
+ * Validate provider configuration
+ */
+async function validateProviderConfig(config) {
+    try {
+        const provider = createProvider(config);
+        return await provider.validateConfig();
+    }
+    catch (error) {
+        console.error(`Provider validation failed for ${config.provider}:`, error);
+        return false;
+    }
+}
+/**
+ * Get default configuration for a provider type
+ */
+function getDefaultConfig(providerType) {
+    return {
+        provider: providerType,
+        ...constants_1.MODEL_DEFAULTS[providerType]
+    };
 }
 
 

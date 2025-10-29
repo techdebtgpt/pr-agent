@@ -50,6 +50,9 @@ web_modules/
 # TypeScript cache
 *.tsbuildinfo
 
+# TypeScript declaration map files (contain local paths)
+*.d.ts.map
+
 # Optional npm cache directory
 .npm
 
