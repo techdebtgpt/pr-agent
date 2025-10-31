@@ -21,14 +21,16 @@ Before setting up PR Agent in your project, you'll need:
 
 ## Setup Instructions
 
-### Step 1: Add PR Agent to Your Repository
+### Step 1: Add PR Agent Workflow to Your Repository
 
-1. Create a workflow file in your repository:
+You need to create a GitHub Actions workflow file in your repository to enable PR Agent. This workflow will automatically run whenever a pull request is opened, updated, or reopened.
+
+1. Create the workflows directory (if it doesn't exist):
    ```bash
    mkdir -p .github/workflows
    ```
 
-2. Create `.github/workflows/pr-agent.yml`:
+2. Create the workflow file `.github/workflows/pr-analyzer.yml`:
    ```yaml
    name: PR Analyzer
    on:
@@ -53,8 +55,28 @@ Before setting up PR Agent in your project, you'll need:
            env:
              ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
    ```
+
+3. Commit and push the workflow file to your repository:
+   ```bash
+   git add .github/workflows/pr-analyzer.yml
+   git commit -m "Add PR Analyzer workflow"
+   git push
+   ```
+
+> **Note**: The workflow file must be named `pr-analyzer.yml` (or any `.yml` file in `.github/workflows/`). Once pushed, GitHub Actions will automatically recognize it and run the workflow on the specified events.
+
+#### Quick Reference: Workflow File Structure
+
+Your repository should have this structure after setup:
+
+```
+your-repo/
+├── .github/
+│   └── workflows/
+       └── pr-analyzer.yml    ← This file triggers PR Agent
+
+```
 
 ### Step 2: Configure Secrets
 
@@ -164,20 +186,23 @@ pr-agent/
 
 ## How It Works
 
-1. **Trigger**: GitHub Action triggers on PR events
-2. **Fetch Diffs**: Uses GitHub API to retrieve all changed files and their diffs
-3. **Prepare Prompt**: Constructs a detailed prompt with the PR title and diffs
-4. **AI Analysis**: Sends to Claude 3.5 Sonnet for analysis
-5. **Parse Response**: Extracts structured insights from Claude's response
-6. **Post Comment**: Creates a formatted comment on the PR using GitHub API
+1. **Workflow Setup**: The `.github/workflows/pr-analyzer.yml` file defines when and how PR Agent runs
+2. **Trigger**: GitHub Action triggers automatically on PR events (`opened`, `synchronize`, `reopened`)
+3. **Fetch Diffs**: Uses GitHub API to retrieve all changed files and their diffs
+4. **Prepare Prompt**: Constructs a detailed prompt with the PR title and diffs
+5. **AI Analysis**: Sends to Claude 3.5 Sonnet for analysis
+6. **Parse Response**: Extracts structured insights from Claude's response
+7. **Post Comment**: Creates a formatted comment on the PR using GitHub API
 
 ## Troubleshooting
 
 ### Action Not Running
 
-- Verify workflow file is in `.github/workflows/` directory
-- Check workflow triggers match PR events
-- Ensure repository permissions allow Actions to run
+- Verify the workflow file `.github/workflows/pr-analyzer.yml` exists and is committed to your repository
+- Check that the workflow file is in the correct location (`.github/workflows/` directory)
+- Verify workflow triggers match PR events (`opened`, `synchronize`, `reopened`)
+- Ensure repository permissions allow Actions to run (check repository Settings → Actions → General)
+- Check if Actions are enabled for your repository
 
 ### No Comments Posted
 
@@ -219,7 +244,7 @@ For issues, questions, or feature requests:
 ## Roadmap
 
 Planned features:
-- [ ] Configuration file support (`.pr-analyzer.yml`)
+- [x] Configuration file support (`.pr-analyzer.yml`)
 - [ ] Customizable analysis prompts
 - [ ] Support for multiple AI providers
 - [ ] Diff size limits and smart chunking
