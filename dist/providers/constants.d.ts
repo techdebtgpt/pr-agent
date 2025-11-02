@@ -28,4 +28,3 @@ export declare const MODEL_DEFAULTS: {
         readonly temperature: 0.2;
     };
 };
-//# sourceMappingURL=constants.d.ts.map

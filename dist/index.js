@@ -40449,11 +40449,11 @@ async function run() {
             core.warning('No changes found in the pull request');
             return;
         }
+        const octokit = github.getOctokit(ghToken);
         // Analyze with Claude
         const summary = await (0, analyzer_1.analyzeWithClaude)(diff, pr.title, apiKey);
         // Post comment
         await postComment(context, pr.number, summary, repository, ghToken);
-        core.info(`Analysis posted for PR #${pr.number}`);
     }
     catch (error) {
         core.setFailed(`Action failed with error: ${error}`);

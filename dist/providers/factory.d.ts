@@ -29,4 +29,3 @@ export declare function validateProviderConfig(config: AIProviderConfig): Promis
  * Get default configuration for a provider type
  */
 export declare function getDefaultConfig(providerType: AIProviderType): Partial<AIProviderConfig>;
-//# sourceMappingURL=factory.d.ts.map
