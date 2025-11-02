@@ -28,7 +28,7 @@ export const PROVIDER_CONSTANTS = {
 
 export const MODEL_DEFAULTS = {
   claude: {
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'claude-sonnet-4-5-20250929',
     maxTokens: 1500,
     temperature: 0.2
   },

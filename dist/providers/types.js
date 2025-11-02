@@ -10,18 +10,20 @@ function isValidProviderType(value) {
     return ['claude', 'openai', 'gemini'].includes(value);
 }
 function isAnalysisResponse(value) {
-    return (value &&
-        typeof value === 'object' &&
-        typeof value.summary === 'string' &&
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+    return (typeof value.summary === 'string' &&
         Array.isArray(value.risks) &&
         typeof value.complexity === 'number' &&
         isValidProviderType(value.provider) &&
         typeof value.model === 'string');
 }
 function isProviderError(error) {
-    return (error &&
-        error instanceof Error &&
-        'provider' in error &&
+    if (!error || !(error instanceof Error)) {
+        return false;
+    }
+    return ('provider' in error &&
         isValidProviderType(error.provider) &&
         'retryable' in error &&
         typeof error.retryable === 'boolean');
