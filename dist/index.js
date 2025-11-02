@@ -40514,7 +40514,7 @@ const factory_1 = __nccwpck_require__(8016);
 async function analyzeWithClaude(diff, title, apiKey) {
     const config = {
         provider: 'claude',
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-3-5-sonnet-20240620',
         maxTokens: 1500,
         temperature: 0.2,
         apiKey: apiKey
