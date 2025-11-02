@@ -41,6 +41,17 @@ export = (app: Probot) => {
     const { comment, pull_request: pr, repository } = context.payload;
     const octokit = context.octokit;
 
+    // Prevent infinite loop: ignore comments from bots (including our own)
+    // Check both comment.user.type and sender type to catch all bot comments
+    const isBotComment = comment.user.type === 'Bot' || 
+                         context.payload.sender?.type === 'Bot' ||
+                         (comment.user.login && comment.user.login.includes('[bot]'));
+    
+    if (isBotComment) {
+      app.log.info(`Skipping bot comment #${comment.id} from ${comment.user.login} to prevent infinite loop`);
+      return;
+    }
+
     app.log.info(`Analyzing review comment #${comment.id} in PR #${pr.number} in ${repository.full_name}`);
 
     try {
