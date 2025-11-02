@@ -1,5 +1,6 @@
 import { Probot } from 'probot';
 import { analyzeWithClaude } from './analyzer';
+import { suggestFixFromComment } from './actions/code-suggestion/codesugestions';
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -33,6 +34,52 @@ export = (app: Probot) => {
 
     } catch (error) {
       app.log.error('Error analyzing PR:', error);
+    }
+  });
+
+  app.on(['pull_request_review_comment.created', 'pull_request_review_comment.edited'], async (context) => {
+    const { comment, pull_request: pr, repository } = context.payload;
+
+    const octokit = context.octokit;
+
+    app.log.info(`Analyzing review comment #${comment.id} in PR #${pr.number} in ${repository.full_name}`);
+    
+    try {
+          const contentResp = await octokit.rest.repos.getContent({
+            owner: repository.owner.login,
+            repo: repository.name,
+            path: comment.path,
+            ref: pr.head.sha
+          });
+
+          let fileContent = '';
+          const data = contentResp.data as any;
+          if (Array.isArray(data) && data.length > 0) {
+            fileContent = data[0].content ?? '';
+            if (data[0].encoding === 'base64') fileContent = Buffer.from(fileContent, 'base64').toString('utf8');
+          } else if (data.content) {
+            fileContent = data.content;
+            if (data.encoding === 'base64') fileContent = Buffer.from(fileContent, 'base64').toString('utf8');
+          }
+
+          const suggestion = await suggestFixFromComment({
+            pr,
+            reviewerComment: comment.body,
+            filePath: comment.path,
+            codeSnippet: fileContent,
+            apiKey: apiKey
+          });
+
+          if (suggestion && suggestion.trim() !== 'NO CHANGE') {
+            await octokit.rest.issues.createComment({
+              owner: repository.owner.login,
+              repo: repository.name,
+              issue_number: pr.number,
+              body: `### 🤖 AI suggested fix for \`${comment.path}\` (based on reviewer comment)\n\n\`\`\`\n${suggestion}\n\`\`\``
+            });
+          }
+    } catch (error) {
+      app.log.error('Error analyzing review comment:', error);
     }
   });
 };

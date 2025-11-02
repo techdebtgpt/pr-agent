@@ -40454,6 +40454,7 @@ async function run() {
         // Post comment
         await postComment(context, pr.number, summary, repository, ghToken);
         core.info(`Analysis posted for PR #${pr.number}`);
+        // Optional: generate code suggestions for inline review comments
     }
     catch (error) {
         core.setFailed(`Action failed with error: ${error}`);
