@@ -13,7 +13,7 @@ export declare const PROVIDER_CONSTANTS: {
 };
 export declare const MODEL_DEFAULTS: {
     readonly claude: {
-        readonly model: "claude-3-5-sonnet-20241022";
+        readonly model: "claude-sonnet-4-5-20250929";
         readonly maxTokens: 1500;
         readonly temperature: 0.2;
     };
@@ -28,4 +28,3 @@ export declare const MODEL_DEFAULTS: {
         readonly temperature: 0.2;
     };
 };
-//# sourceMappingURL=constants.d.ts.map

@@ -18,8 +18,7 @@ export class ClaudeProvider extends BaseAIProvider {
   constructor(config: AIProviderConfig) {
     super(config);
     this.anthropic = new Anthropic({
-      apiKey: this.apiKey,
-      baseURL: config.baseUrl
+      apiKey: this.apiKey
     });
   }
 

@@ -9,7 +9,7 @@ import { PRAnalyzerConfig, ExtendedAnalysisResult } from './types';
 export async function analyzeWithClaude(diff: string, title?: string, apiKey?: string): Promise<string> {
     const config: AIProviderConfig = {
         provider: 'claude',
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-5-20250929',
         maxTokens: 1500,
         temperature: 0.2,
         apiKey: apiKey
@@ -22,7 +22,7 @@ export async function analyzeWithClaude(diff: string, title?: string, apiKey?: s
         return formatAnalysisResponse(response);
     } catch (error) {
         console.error('Claude analysis failed:', error);
-        return 'Sorry, AI analysis is temporarily unavailable.';
+        throw new Error('Sorry, AI analysis is temporarily unavailable.');
     }
 }
 
@@ -45,7 +45,7 @@ export async function analyzePR(
         // Default to Claude if no config provided
         config = {
             provider: 'claude',
-            model: 'claude-3-5-sonnet-20241022',
+            model: 'claude-sonnet-4-5-20250929',
             maxTokens: 1500,
             temperature: 0.2
         };

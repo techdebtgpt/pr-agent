@@ -60,4 +60,3 @@ export declare abstract class BaseAIProvider {
      */
     protected getPromptCacheSize(): number;
 }
-//# sourceMappingURL=base.d.ts.map

@@ -11,7 +11,7 @@ const factory_1 = require("./providers/factory");
 async function analyzeWithClaude(diff, title, apiKey) {
     const config = {
         provider: 'claude',
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-5-20250929',
         maxTokens: 1500,
         temperature: 0.2,
         apiKey: apiKey
@@ -24,7 +24,7 @@ async function analyzeWithClaude(diff, title, apiKey) {
     }
     catch (error) {
         console.error('Claude analysis failed:', error);
-        return 'Sorry, AI analysis is temporarily unavailable.';
+        throw new Error('Sorry, AI analysis is temporarily unavailable.');
     }
 }
 /**
@@ -39,7 +39,7 @@ async function analyzePR(diff, title, config, repository, prNumber) {
         // Default to Claude if no config provided
         config = {
             provider: 'claude',
-            model: 'claude-3-5-sonnet-20241022',
+            model: 'claude-sonnet-4-5-20250929',
             maxTokens: 1500,
             temperature: 0.2
         };

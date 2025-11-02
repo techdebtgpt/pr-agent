@@ -14,4 +14,3 @@ export declare class ClaudeProvider extends BaseAIProvider {
      */
     protected buildPrompt(request: AnalysisRequest): string;
 }
-//# sourceMappingURL=claude.d.ts.map
