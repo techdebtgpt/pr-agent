@@ -9,7 +9,7 @@ import { PRAnalyzerConfig, ExtendedAnalysisResult } from './types';
 export async function analyzeWithClaude(diff: string, title?: string, apiKey?: string): Promise<string> {
     const config: AIProviderConfig = {
         provider: 'claude',
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-3-5-sonnet-20240620',
         maxTokens: 1500,
         temperature: 0.2,
         apiKey: apiKey
