@@ -40802,8 +40802,7 @@ class ClaudeProvider extends base_1.BaseAIProvider {
     constructor(config) {
         super(config);
         this.anthropic = new sdk_1.default({
-            apiKey: this.apiKey,
-            baseURL: config.baseUrl
+            apiKey: this.apiKey
         });
     }
     getProviderType() {
