@@ -22,7 +22,7 @@ export async function analyzeWithClaude(diff: string, title?: string, apiKey?: s
         return formatAnalysisResponse(response);
     } catch (error) {
         console.error('Claude analysis failed:', error);
-        return 'Sorry, AI analysis is temporarily unavailable.';
+        throw new Error('Sorry, AI analysis is temporarily unavailable.');
     }
 }
 

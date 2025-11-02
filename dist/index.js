@@ -40527,7 +40527,7 @@ async function analyzeWithClaude(diff, title, apiKey) {
     }
     catch (error) {
         console.error('Claude analysis failed:', error);
-        return 'Sorry, AI analysis is temporarily unavailable.';
+        throw new Error('Sorry, AI analysis is temporarily unavailable.');
     }
 }
 /**
