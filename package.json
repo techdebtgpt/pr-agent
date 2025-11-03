@@ -1,12 +1,31 @@
 {
-  "name": "tdgpt",
+  "name": "pr-agent",
   "version": "0.1.0",
   "description": "Simple AI GitHub PR analyzer",
   "main": "dist/index.js",
+  "bin": {
+    "pr-agent": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "github",
+    "pr",
+    "pull-request",
+    "code-review",
+    "ai",
+    "claude",
+    "analyzer",
+    "cli"
+  ],
   "scripts": {
     "build": "tsc",
     "build:action": "ncc build src/action.ts -o dist --source-map",
     "package": "npm run build:action",
+    "prepublishOnly": "npm run build",
     "dev": "npm run build && probot run ./dist/index.js",
     "start": "probot run ./dist/index.js",
     "test": "jest",
@@ -17,6 +36,7 @@
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.1",
     "@anthropic-ai/sdk": "^0.24.3",
+    "chalk": "^4.1.2",
     "probot": "^12.3.1"
   },
   "devDependencies": {

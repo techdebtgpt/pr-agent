@@ -126,6 +126,46 @@ export class ClaudeProvider extends BaseAIProvider {
 
   getModelInfo(): ModelInfo {
     const modelConfigs: Record<string, ModelInfo> = {
+      'claude-sonnet-4-5-20250929': {
+        name: 'Claude Sonnet 4.5',
+        maxTokens: 200000,
+        costPer1kTokens: { input: 0.003, output: 0.015 },
+        capabilities: {
+          maxContextLength: 200000,
+          supportsImages: true,
+          supportsStreaming: true,
+          supportsFunctionCalling: true,
+          rateLimitRpm: 5000,
+          rateLimitTpm: 500000
+        }
+      },
+      'claude-sonnet-4-20250514': {
+        name: 'Claude Sonnet 4',
+        maxTokens: 200000,
+        costPer1kTokens: { input: 0.003, output: 0.015 },
+        capabilities: {
+          maxContextLength: 200000,
+          supportsImages: true,
+          supportsStreaming: true,
+          supportsFunctionCalling: true,
+          rateLimitRpm: 5000,
+          rateLimitTpm: 500000
+        }
+      },
+      'claude-opus-4-20250514': {
+        name: 'Claude Opus 4',
+        maxTokens: 200000,
+        costPer1kTokens: { input: 0.015, output: 0.075 },
+        capabilities: {
+          maxContextLength: 200000,
+          supportsImages: true,
+          supportsStreaming: true,
+          supportsFunctionCalling: true,
+          rateLimitRpm: 2000,
+          rateLimitTpm: 200000
+        }
+      },
+      // Legacy models kept for backward compatibility
       'claude-3-5-sonnet-20241022': {
         name: 'Claude 3.5 Sonnet',
         maxTokens: 200000,
@@ -185,30 +225,10 @@ export class ClaudeProvider extends BaseAIProvider {
 
   /**
    * Claude-optimized prompt building
+   * Uses base class method which handles outputFormat
    */
   protected buildPrompt(request: AnalysisRequest): string {
-    return `
-Human: You are an expert software engineer and code reviewer. Your task is to analyze a GitHub pull request (PR) and provide a clear, actionable summary for reviewers.
-
-The following is the diff of the PR that needs reviewing:
-${request.diff}
-${request.title ? `PR Title: ${request.title}` : ''}
-${request.repository ? `Repository: ${request.repository}` : ''}
-${request.prNumber ? `PR Number: #${request.prNumber}` : ''}
-
-Analyze the PR and provide a concise, structured response following these guidelines:
-
-1. Provide a **Summary**: briefly describe what the change does and its purpose.
-2. Identify **Potential Risks**: list possible bugs, edge cases, or issues. Write "None" if no risks are apparent.
-3. Rate **Complexity (1–5)**:
-   - 1 = trivial (small, safe, no risk)  
-   - 3 = moderate (requires some attention, medium risk)  
-   - 5 = very complex (large change, high risk, needs deep review)
-4. Keep the response under 200 words.
-5. Focus on clarity and actionable insights relevant for reviewers.
-6. Reference specific files or sections in the diff if needed.
-7. Use Markdown for formatting.
-8. Do not include generic introductions like "Let's analyze this PR".
-9. Start directly with the analysis and be detailed.`;
+    // Use base class method which properly handles outputFormat
+    return super.buildPrompt(request);
   }
 }

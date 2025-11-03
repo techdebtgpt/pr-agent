@@ -40684,6 +40684,8 @@ class BaseAIProvider {
         if (request.diff.length > constants_1.PROVIDER_CONSTANTS.MAX_DIFF_SIZE_BYTES) {
             throw new Error(`Diff is too large (>${constants_1.PROVIDER_CONSTANTS.MAX_DIFF_SIZE_BYTES / 1000000}MB)`);
         }
+        const outputFormat = request.outputFormat || 'markdown';
+        const isTerminal = outputFormat === 'terminal';
         return `
 [ROLE] You are an expert software engineer and code reviewer. Your task is to analyze a GitHub pull request (PR) and provide a clear, actionable summary for reviewers.
 
@@ -40696,16 +40698,40 @@ ${request.prNumber ? `PR Number: #${request.prNumber}` : ''}
 
 [TASK] Analyze the PR and provide a concise, structured response following the guidelines below.
 
+[OUTPUT FORMATTING] (${isTerminal ? 'TERMINAL/CLI' : 'MARKDOWN'}):
+${isTerminal ? `- Format for terminal/CLI display with chalk-like formatting
+- Use simple, clean text formatting (avoid complex markdown)
+- Use emoji sparingly for visual clarity (🔴 🟡 ✅ ⚠️)
+- Use plain text with minimal markdown (avoid code blocks where possible)
+- Keep lines concise and readable in monospace terminals
+- Use simple bullet points with dashes (-)` : `- Use proper Markdown format for GitHub comments, docs, etc.
+- Use proper headers (## or ### for sections)
+- Use code blocks with language tags (triple backticks followed by language name like typescript)
+- Use inline code backticks (single backticks around names) for function/class/import names
+- Use bold (double asterisks around text) for emphasis on important points
+- Use bullet points (- or *) for lists
+- Ensure proper markdown syntax for GitHub rendering`}
+
 [GUIDELINES]
 1. Provide a **Summary**: briefly describe what the change does and its purpose.
 2. Identify **Potential Risks**: list possible bugs, edge cases, or issues. Write "None" if no risks are apparent.
+   **CRITICAL**: Prioritize build-breaking issues at the top of the risks list:
+   - Missing imports (modules/functions/classes imported but not available)
+   - Unused imports that should be removed
+   - Type errors that would cause compilation failures
+   - Deleted exports that other files might depend on
+   - Renamed functions/classes that break existing usages
+   - Circular dependency issues
+   - Syntax errors
+   - Missing package.json dependencies for new imports
+   - Incorrect import paths (relative vs absolute)
 3. Rate **Complexity (1–5)**:
    - 1 = trivial (small, safe, no risk)  
    - 3 = moderate (requires some attention, medium risk)  
    - 5 = very complex (large change, high risk, needs deep review)
-4. Keep the response under 200 words.
+4. Keep the response under 250 words.
 5. Focus on clarity and actionable insights relevant for reviewers.
-6. Reference specific files or sections in the diff if needed.
+6. Reference specific files, line numbers, or imports that are problematic.
 7. Use Markdown for formatting.
 8. Do not include generic introductions like "Let's analyze this PR".
 9. Start directly with the analysis and be detailed.
@@ -40895,6 +40921,46 @@ class ClaudeProvider extends base_1.BaseAIProvider {
     }
     getModelInfo() {
         const modelConfigs = {
+            'claude-sonnet-4-5-20250929': {
+                name: 'Claude Sonnet 4.5',
+                maxTokens: 200000,
+                costPer1kTokens: { input: 0.003, output: 0.015 },
+                capabilities: {
+                    maxContextLength: 200000,
+                    supportsImages: true,
+                    supportsStreaming: true,
+                    supportsFunctionCalling: true,
+                    rateLimitRpm: 5000,
+                    rateLimitTpm: 500000
+                }
+            },
+            'claude-sonnet-4-20250514': {
+                name: 'Claude Sonnet 4',
+                maxTokens: 200000,
+                costPer1kTokens: { input: 0.003, output: 0.015 },
+                capabilities: {
+                    maxContextLength: 200000,
+                    supportsImages: true,
+                    supportsStreaming: true,
+                    supportsFunctionCalling: true,
+                    rateLimitRpm: 5000,
+                    rateLimitTpm: 500000
+                }
+            },
+            'claude-opus-4-20250514': {
+                name: 'Claude Opus 4',
+                maxTokens: 200000,
+                costPer1kTokens: { input: 0.015, output: 0.075 },
+                capabilities: {
+                    maxContextLength: 200000,
+                    supportsImages: true,
+                    supportsStreaming: true,
+                    supportsFunctionCalling: true,
+                    rateLimitRpm: 2000,
+                    rateLimitTpm: 200000
+                }
+            },
+            // Legacy models kept for backward compatibility
             'claude-3-5-sonnet-20241022': {
                 name: 'Claude 3.5 Sonnet',
                 maxTokens: 200000,
@@ -40951,31 +41017,11 @@ class ClaudeProvider extends base_1.BaseAIProvider {
     }
     /**
      * Claude-optimized prompt building
+     * Uses base class method which handles outputFormat
      */
     buildPrompt(request) {
-        return `
-Human: You are an expert software engineer and code reviewer. Your task is to analyze a GitHub pull request (PR) and provide a clear, actionable summary for reviewers.
-
-The following is the diff of the PR that needs reviewing:
-${request.diff}
-${request.title ? `PR Title: ${request.title}` : ''}
-${request.repository ? `Repository: ${request.repository}` : ''}
-${request.prNumber ? `PR Number: #${request.prNumber}` : ''}
-
-Analyze the PR and provide a concise, structured response following these guidelines:
-
-1. Provide a **Summary**: briefly describe what the change does and its purpose.
-2. Identify **Potential Risks**: list possible bugs, edge cases, or issues. Write "None" if no risks are apparent.
-3. Rate **Complexity (1–5)**:
-   - 1 = trivial (small, safe, no risk)  
-   - 3 = moderate (requires some attention, medium risk)  
-   - 5 = very complex (large change, high risk, needs deep review)
-4. Keep the response under 200 words.
-5. Focus on clarity and actionable insights relevant for reviewers.
-6. Reference specific files or sections in the diff if needed.
-7. Use Markdown for formatting.
-8. Do not include generic introductions like "Let's analyze this PR".
-9. Start directly with the analysis and be detailed.`;
+        // Use base class method which properly handles outputFormat
+        return super.buildPrompt(request);
     }
 }
 exports.ClaudeProvider = ClaudeProvider;
