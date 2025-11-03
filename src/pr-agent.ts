@@ -12,7 +12,6 @@ import { createProvider } from './providers/factory';
 import { BaseAIProvider } from './providers/base';
 import Anthropic from '@anthropic-ai/sdk';
 import { execSync } from 'child_process';
-import existing from './important'
 
 export interface DiffFile {
   path: string;
@@ -67,13 +66,15 @@ export class PRAnalysisAgent {
   private apiKey: string;
   private state: AgentState;
   private tools: Map<string, AgentTool>;
-  private existing: string[];
+  private githubApi?: any; // Octokit instance
+  private repository?: { owner: string; repo: string; baseSha?: string; headSha?: string };
   
-  constructor(config: AIProviderConfig, apiKey: string) {
+  constructor(config: AIProviderConfig, apiKey: string, githubApi?: any, repository?: { owner: string; repo: string; baseSha?: string; headSha?: string }) {
     this.provider = createProvider(config);
     this.apiKey = apiKey;
     this.anthropic = new Anthropic({ apiKey });
-    this.existing = existing;
+    this.githubApi = githubApi;
+    this.repository = repository;
     
     this.state = {
       analyzedFiles: new Map(),
@@ -227,6 +228,28 @@ ${isTerminal ? `- DO NOT use markdown headers (no ## or ###) - use plain text se
           // Use the response directly - it should already be in the correct format
           const parsed = this.parseResponse(text);
           
+          // Check imports and usages using GitHub API if available
+          let importFindings: any[] = [];
+          if (this.githubApi && this.repository && (file.status === 'A' || file.status === 'M')) {
+            try {
+              const importCheck = await this.executeTool('check_imports_and_usages', { file: params.file });
+              if (importCheck.success && importCheck.findings) {
+                importFindings = importCheck.findings;
+                
+                // Add critical findings to risks
+                importFindings.forEach(finding => {
+                  if (finding.type === 'missing_import' || finding.type === 'missing_export') {
+                    const riskMsg = `[File: ${finding.file}] ${finding.message}${finding.line ? ` (line ${finding.line})` : ''}`;
+                    state.risks.add(riskMsg);
+                    parsed.risks.push(riskMsg);
+                  }
+                });
+              }
+            } catch (error) {
+              // Silently fail - GitHub API check is optional
+            }
+          }
+
           const analysis: AnalysisResponse = {
             summary: parsed.summary,
             risks: parsed.risks,
@@ -250,7 +273,8 @@ ${isTerminal ? `- DO NOT use markdown headers (no ## or ###) - use plain text se
           return {
             success: true,
             result: analysis,
-            file: params.file.path
+            file: params.file.path,
+            importFindings
           };
         } catch (error: any) {
           return {
@@ -527,6 +551,224 @@ ${isTerminal ? `- NO markdown headers (no ## or ###) - use plain text labels lik
             recommendations: state.insights.length > 0 ? state.insights.slice(0, 5) : [],
             provider: this.provider.getProviderType(),
             model: (this.provider as any).config?.model || 'claude-sonnet-4-5-20250929'
+          };
+        }
+      }
+    });
+
+    this.tools.set('check_imports_and_usages', {
+      name: 'check_imports_and_usages',
+      description: 'Check if imported modules/functions exist in the repository and verify their usage. Uses GitHub API to fetch file contents and validate imports/exports.',
+      execute: async (params: { file: DiffFile }, state: AgentState) => {
+        if (!this.githubApi || !this.repository) {
+          return {
+            success: false,
+            error: 'GitHub API not available. Cannot check imports.',
+            findings: []
+          };
+        }
+
+        const file = params.file;
+        const findings: Array<{ type: 'missing_import' | 'unused_import' | 'missing_export' | 'function_not_used'; 
+                                 file: string; 
+                                 import?: string; 
+                                 export?: string; 
+                                 function?: string;
+                                 line?: number;
+                                 message: string }> = [];
+
+        try {
+          // Get the file content from the repository
+          let fileContent: string | null = null;
+          const ref = this.repository.headSha || 'HEAD';
+          
+          try {
+            const { data } = await this.githubApi.rest.repos.getContent({
+              owner: this.repository.owner,
+              repo: this.repository.repo,
+              path: file.path,
+              ref
+            });
+
+            if (!Array.isArray(data) && data.type === 'file' && data.content) {
+              fileContent = Buffer.from(data.content, 'base64').toString('utf-8');
+            }
+          } catch (error) {
+            // File might not exist in head, try base
+            if (this.repository.baseSha) {
+              try {
+                const { data } = await this.githubApi.rest.repos.getContent({
+                  owner: this.repository.owner,
+                  repo: this.repository.repo,
+                  path: file.path,
+                  ref: this.repository.baseSha
+                });
+                if (!Array.isArray(data) && data.type === 'file' && data.content) {
+                  fileContent = Buffer.from(data.content, 'base64').toString('utf-8');
+                }
+              } catch (e) {
+                // File doesn't exist
+              }
+            }
+          }
+
+          if (!fileContent) {
+            return {
+              success: true,
+              findings: [{
+                type: 'missing_import',
+                file: file.path,
+                message: `Cannot validate imports: file content not available`
+              }]
+            };
+          }
+
+          // Extract imports from the file
+          const importPatterns = [
+            /import\s+(?:(?:\{([^}]*)\}|\*|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g,
+            /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+            /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+          ];
+
+          const imports: Array<{ path: string; names?: string[]; line: number }> = [];
+          let lineNum = 1;
+          
+          for (const line of fileContent.split('\n')) {
+            for (const pattern of importPatterns) {
+              let match;
+              while ((match = pattern.exec(line)) !== null) {
+                const importPath = match[2] || match[1];
+                if (importPath && (importPath.startsWith('.') || importPath.startsWith('/'))) {
+                  const names = match[1] ? match[1].split(',').map(n => n.trim().replace(/as\s+\w+/, '').trim()) : undefined;
+                  imports.push({ path: importPath, names, line: lineNum });
+                }
+              }
+            }
+            lineNum++;
+          }
+
+          // Check each import
+          for (const imp of imports) {
+            // Resolve import path
+            const path = require('path');
+            const baseDir = path.dirname(file.path);
+            let resolvedPath = path.resolve(baseDir, imp.path.replace(/\.(ts|tsx|js|jsx)$/, ''));
+            
+            // Make relative to repo root
+            resolvedPath = resolvedPath.replace(/^.*\//, '');
+            
+            // Try different extensions
+            const extensions = ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js', '/index.jsx'];
+            let foundFile = false;
+            let importedFileContent: string | null = null;
+
+            for (const ext of extensions) {
+              const candidatePath = resolvedPath + ext;
+              try {
+                const { data } = await this.githubApi.rest.repos.getContent({
+                  owner: this.repository.owner,
+                  repo: this.repository.repo,
+                  path: candidatePath,
+                  ref
+                });
+
+                if (!Array.isArray(data) && data.type === 'file' && data.content) {
+                  importedFileContent = Buffer.from(data.content, 'base64').toString('utf-8');
+                  foundFile = true;
+                  break;
+                }
+              } catch (error) {
+                // Try base branch
+                if (this.repository.baseSha) {
+                  try {
+                    const { data } = await this.githubApi.rest.repos.getContent({
+                      owner: this.repository.owner,
+                      repo: this.repository.repo,
+                      path: candidatePath,
+                      ref: this.repository.baseSha
+                    });
+                    if (!Array.isArray(data) && data.type === 'file' && data.content) {
+                      importedFileContent = Buffer.from(data.content, 'base64').toString('utf-8');
+                      foundFile = true;
+                      break;
+                    }
+                  } catch (e) {
+                    // Continue to next candidate
+                  }
+                }
+              }
+            }
+
+            if (!foundFile) {
+              findings.push({
+                type: 'missing_import',
+                file: file.path,
+                import: imp.path,
+                line: imp.line,
+                message: `Import '${imp.path}' not found in repository`
+              });
+              continue;
+            }
+
+            // If specific names were imported, check if they're exported
+            if (imp.names && importedFileContent) {
+              for (const name of imp.names) {
+                const cleanName = name.trim();
+                // Check if it's exported (simplified check)
+                const exportPatterns = [
+                  new RegExp(`export\\s+(?:const|let|var|function|class|type|interface|enum)\\s+${cleanName}\\b`),
+                  new RegExp(`export\\s*\\{[^}]*\\b${cleanName}\\b[^}]*\\}`),
+                  new RegExp(`export\\s+default\\s+${cleanName}\\b`)
+                ];
+
+                const isExported = exportPatterns.some(pattern => pattern.test(importedFileContent!));
+                if (!isExported) {
+                  findings.push({
+                    type: 'missing_export',
+                    file: file.path,
+                    import: imp.path,
+                    export: cleanName,
+                    line: imp.line,
+                    message: `'${cleanName}' is imported from '${imp.path}' but not exported`
+                  });
+                }
+              }
+            }
+          }
+
+          // Check for unused imports (simple heuristic: check if imported names are used)
+          if (fileContent) {
+            for (const imp of imports) {
+              if (imp.names && imp.names.length > 0) {
+                for (const name of imp.names) {
+                  const cleanName = name.trim();
+                  // Count occurrences after the import line
+                  const afterImport = fileContent.split('\n').slice(imp.line).join('\n');
+                  // Simple check: name appears in code (but not in comments/strings - simplified)
+                  const usageCount = (afterImport.match(new RegExp(`\\b${cleanName}\\b`, 'g')) || []).length;
+                  if (usageCount <= 1) { // Only appears in import itself
+                    findings.push({
+                      type: 'unused_import',
+                      file: file.path,
+                      import: cleanName,
+                      line: imp.line,
+                      message: `'${cleanName}' is imported but never used`
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          return {
+            success: true,
+            findings
+          };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: error.message,
+            findings: []
           };
         }
       }

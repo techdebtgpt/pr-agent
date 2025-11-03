@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { analyzeWithClaude } from './analyzer';
+import { PRAnalysisAgent } from './pr-agent';
+import { AIProviderConfig } from './providers/types';
 import { suggestFixFromComment, prepareFileReplacement } from './actions/code-suggestion/codesugestions';
 
 async function run() {
@@ -36,9 +37,59 @@ async function run() {
       core.warning('No changes found in the pull request');
       return;
     }
+    
     const octokit = github.getOctokit(ghToken);
-    // Analyze with Claude
-    const summary = await analyzeWithClaude(diff, pr.title, apiKey);
+    
+    // Use PRAnalysisAgent with GitHub API access for import checking
+    const agentConfig: AIProviderConfig = {
+      provider: 'claude',
+      model: 'claude-sonnet-4-5-20250929',
+      maxTokens: 2000,
+      temperature: 0.2,
+      apiKey: apiKey
+    };
+
+    if (!repository) {
+      core.setFailed('Repository information not available');
+      return;
+    }
+
+    const agent = new PRAnalysisAgent(
+      agentConfig,
+      apiKey,
+      octokit,
+      {
+        owner: repository.owner.login,
+        repo: repository.name,
+        baseSha: pr.base.sha,
+        headSha: pr.head.sha
+      }
+    );
+
+    // Analyze with the agent (includes import checking via GitHub API)
+    const result = await agent.analyze(diff, pr.title, { summary: true, risks: true, complexity: true }, 'markdown');
+
+    // Format the summary
+    let summary = `### Summary\n${result.summary}\n\n`;
+    
+    if (result.overallRisks.length > 0) {
+      summary += `### Potential Risks\n`;
+      result.overallRisks.forEach(risk => {
+        summary += `- ${risk}\n`;
+      });
+      summary += '\n';
+    } else {
+      summary += `### Potential Risks\nNone\n\n`;
+    }
+    
+    summary += `### Complexity: ${result.overallComplexity}/5\n`;
+    
+    if (result.recommendations && result.recommendations.length > 0) {
+      summary += `\n### Recommendations\n`;
+      result.recommendations.forEach(rec => {
+        summary += `- ${rec}\n`;
+      });
+    }
 
     // Post comment
     await postComment(context, pr.number, summary, repository!, ghToken);
