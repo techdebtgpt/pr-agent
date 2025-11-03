@@ -55,7 +55,14 @@ export declare class PRAnalysisAgent {
     private apiKey;
     private state;
     private tools;
-    constructor(config: AIProviderConfig, apiKey: string);
+    private githubApi?;
+    private repository?;
+    constructor(config: AIProviderConfig, apiKey: string, githubApi?: any, repository?: {
+        owner: string;
+        repo: string;
+        baseSha?: string;
+        headSha?: string;
+    });
     /**
      * Register available tools for the agent
      */

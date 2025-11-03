@@ -41,10 +41,11 @@ async function run() {
     const octokit = github.getOctokit(ghToken);
     
     // Use PRAnalysisAgent with GitHub API access for import checking
+    // Use higher maxTokens for GitHub Actions to get full analysis
     const agentConfig: AIProviderConfig = {
       provider: 'claude',
       model: 'claude-sonnet-4-5-20250929',
-      maxTokens: 2000,
+      maxTokens: 8000, // Increased for full analysis in GitHub Actions
       temperature: 0.2,
       apiKey: apiKey
     };
@@ -69,8 +70,13 @@ async function run() {
     // Analyze with the agent (includes import checking via GitHub API)
     const result = await agent.analyze(diff, pr.title, { summary: true, risks: true, complexity: true }, 'markdown');
 
-    // Format the summary
-    let summary = `### Summary\n${result.summary}\n\n`;
+    // Format the summary - remove any existing headers to avoid duplication
+    let cleanSummary = result.summary
+      .replace(/^###\s*Summary\s*\n?/i, '')
+      .replace(/^Summary:\s*\n?/i, '')
+      .trim();
+    
+    let summary = `### Summary\n${cleanSummary}\n\n`;
     
     if (result.overallRisks.length > 0) {
       summary += `### Potential Risks\n`;

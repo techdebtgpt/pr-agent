@@ -140,7 +140,7 @@ ${isTerminal ? `- Format for terminal/CLI display with chalk-like formatting
     const risksMatch = response.match(/\*\*Potential Risks\*\*:?\s*(.*?)(?=\*\*|$)/is);
     const complexityMatch = response.match(/\*\*Complexity.*?(\d+)/i);
 
-    const summary = summaryMatch?.[1]?.trim() || response.substring(0, 200);
+    const summary = summaryMatch?.[1]?.trim() || response.trim();
     
     // Parse risks - look for bullet points or numbered lists
     const risksText = risksMatch?.[1]?.trim() || '';

@@ -12,6 +12,7 @@ import { createProvider } from './providers/factory';
 import { BaseAIProvider } from './providers/base';
 import Anthropic from '@anthropic-ai/sdk';
 import { execSync } from 'child_process';
+import importantCheck from './existing-checks';
 
 export interface DiffFile {
   path: string;
@@ -207,7 +208,7 @@ ${isTerminal ? `- DO NOT use markdown headers (no ## or ###) - use plain text se
 - For each risk, be specific: mention the exact file name, line number if possible, and the import/function/class name
 - Format risks as: "- [File: path/to/file] Description of the risk (line X if applicable)"`}
 - Only flag risks that would actually prevent the code from building or running
-- Keep the response under 300 words
+- Be comprehensive and detailed - do not limit your response length
 - Start directly with the analysis (no introductions)
 - If a section is not requested, omit it completely`;
 
@@ -215,7 +216,7 @@ ${isTerminal ? `- DO NOT use markdown headers (no ## or ###) - use plain text se
           // Temporarily override the provider's prompt by directly calling the API
           const response = await this.anthropic.messages.create({
             model: (this.provider as any).config?.model || 'claude-sonnet-4-5-20250929',
-            max_tokens: (this.provider as any).config?.maxTokens || 2000,
+            max_tokens: (this.provider as any).config?.maxTokens || 8000,
             temperature: (this.provider as any).config?.temperature || 0.2,
             messages: [{ role: 'user', content: customPrompt }]
           });
@@ -395,14 +396,14 @@ ${isTerminal ? `- DO NOT use markdown headers (no ## or ###) - use plain text se
 - For each risk, be specific: mention the exact file name, line number if possible, and the import/function/class name
 - Format risks as: "- [File: path/to/file] Description of the risk (line X if applicable)"`}
 - Only flag risks that would actually prevent the code from building or running
-- Keep the response under 300 words
+- Be comprehensive and detailed - do not limit your response length
 - Start directly with the analysis (no introductions)
 - If a section is not requested, omit it completely`;
           
           try {
             const response = await this.anthropic.messages.create({
               model: (this.provider as any).config?.model || 'claude-sonnet-4-5-20250929',
-              max_tokens: (this.provider as any).config?.maxTokens || 2000,
+              max_tokens: (this.provider as any).config?.maxTokens || 8000,
               temperature: (this.provider as any).config?.temperature || 0.2,
               messages: [{ role: 'user', content: customPrompt }]
             });
@@ -491,19 +492,20 @@ ${state.context.join('\n') || 'No additional context'}
 
 Please provide:
 ${isTerminal ? `1. Overall PR summary (plain text, no markdown headers - just "Summary:" as label)
-   - Provide a COMPREHENSIVE and DETAILED summary (150-400 words)
+   - Provide a COMPREHENSIVE and DETAILED summary - be thorough and complete
    - Describe the overall purpose and scope of the PR
    - Explain what major changes were made and why
    - Describe the architecture, design decisions, and key components
    - Mention the main files/changes and their roles
    - Explain how the changes fit together
    - Be descriptive and informative, not just "name transformation and core addition"
+   - Do NOT limit length - provide full detailed analysis
 2. Critical risks ONLY - only list risks that would BREAK the build or cause runtime failures (plain text, format as "File: path/to/file\n  - Risk 1\n  - Risk 2")
    - ONLY include build-breaking issues, missing critical imports, type errors that prevent compilation
    - DO NOT include minor issues, code style, or non-critical concerns
    - If no critical risks, just write "None"
 3. Overall complexity rating (1-5)
-4. Priority recommendations (plain text, no markdown)` : `1. Overall PR summary (use ### Summary header, 150-400 words, comprehensive and detailed)
+4. Priority recommendations (plain text, no markdown)` : `1. Overall PR summary (use ### Summary header, comprehensive and detailed - provide full analysis)
 2. Critical risks ONLY (use ### Risks header, format as "- [File: path/to/file] Description")
 3. Overall complexity rating (use ### Complexity header with number 1-5)
 4. Priority recommendations (use ### Recommendations header)`}
@@ -515,7 +517,7 @@ ${isTerminal ? `- NO markdown headers (no ## or ###) - use plain text labels lik
 - Avoid code blocks unless absolutely necessary` : `- Use proper markdown headers
 - Group risks by file when possible
 - Use proper markdown formatting`}
-- Summary should be COMPREHENSIVE (150-400 words) - describe architecture, design, components, relationships, purpose
+- Summary should be COMPREHENSIVE and DETAILED - describe architecture, design, components, relationships, purpose. Do not limit length - provide full analysis.
 - Only flag CRITICAL/BREAKING risks - skip minor issues, code style, or non-critical concerns
 - Remove duplicate information
 - Focus on actionable, high-priority items`;
@@ -839,9 +841,14 @@ Choose files from the priority list above. Return JSON with action and target fi
     const normalized = response.trim();
     
     // Extract Summary section - handle both terminal and markdown formats
+    // Use greedy match with proper boundaries to get full content until next section
     const summaryPatterns = [
-      /### Summary\s*\n(.*?)(?=\n### |\nSummary:|\nPotential Risks:|\nComplexity:|$)/is,
-      /Summary:\s*\n(.*?)(?=\n### |\nSummary:|\nPotential Risks:|\nComplexity:|$)/is
+      // Markdown format: ### Summary followed by content until next ### or section
+      /###\s*Summary\s*\n(.*?)(?=\n###\s+(?:Potential Risks|Risks|Complexity|Recommendations)|$)/is,
+      // Plain text: Summary: followed by content until next section
+      /Summary:\s*\n(.*?)(?=\n(?:### |Summary:|Potential Risks:|Risks:|Complexity:|Recommendations:)|$)/is,
+      // More lenient: any variation of Summary header
+      /(?:###\s*)?Summary:?\s*\n(.*?)(?=\n(?:###\s+)?(?:Potential\s+)?Risks?:|\n(?:###\s+)?Complexity:|\n(?:###\s+)?Recommendations:|###|$)/is
     ];
     
     let summary = '';
@@ -849,15 +856,34 @@ Choose files from the priority list above. Return JSON with action and target fi
       const match = normalized.match(pattern);
       if (match && match[1]?.trim()) {
         summary = match[1].trim();
+        // Remove any duplicate "Summary" headers that might appear in content
+        summary = summary.replace(/^###\s*Summary\s*\n?/i, '').replace(/^Summary:\s*\n?/i, '').trim();
         break;
       }
     }
-    if (!summary) {
-      // Fallback: get first paragraph
-      const firstLine = normalized.split('\n')[0]?.trim();
-      summary = firstLine && !firstLine.match(/^(Summary|Potential Risks|Complexity):/i) 
-        ? firstLine 
-        : normalized.substring(0, 200);
+    
+    // If no match found, try to extract everything before the first section header
+    if (!summary || summary.length < 50) {
+      // Look for the start of content (after any initial headers)
+      const contentStart = normalized.search(/\n(?!###|Summary:|Potential Risks:|Complexity:)/);
+      if (contentStart > 0) {
+        // Get everything from content start to first section
+        const nextSection = normalized.search(/\n(?:###\s+(?:Potential Risks|Risks|Complexity)|Potential Risks:|Risks:|Complexity:)/i);
+        if (nextSection > contentStart) {
+          summary = normalized.substring(contentStart, nextSection).trim();
+        } else {
+          summary = normalized.substring(contentStart).trim();
+        }
+      } else {
+        // Fallback: take everything up to first clear section marker
+        const sectionMarker = normalized.match(/\n(###\s+(?:Potential Risks|Risks|Complexity)|Potential Risks:|Risks:|Complexity:)/i);
+        summary = sectionMarker && sectionMarker.index 
+          ? normalized.substring(0, sectionMarker.index).trim()
+          : normalized.trim();
+      }
+      
+      // Clean up any leading headers
+      summary = summary.replace(/^(###\s*)?Summary:?\s*\n?/i, '').trim();
     }
     
     // Extract Risks section - handle both formats
