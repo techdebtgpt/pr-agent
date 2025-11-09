@@ -1,7 +1,7 @@
-// TDGPT - Basic Types
-// Simple types for our GitHub App
+// PR Agent - Basic Types
+// Core types for PR analysis
 
-import { AIProviderType, AnalysisResponse } from './providers/types';
+export type AIProviderType = 'anthropic' | 'openai' | 'google';
 
 export interface PRInfo {
   number: number;
