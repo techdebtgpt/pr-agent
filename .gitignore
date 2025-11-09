@@ -151,5 +151,5 @@ vite.config.ts.timestamp-*
 dist/*
 
 # Except the GitHub Action bundle (required for Actions to work)
-!dist/action.js
-!dist/action.js.map
+!dist/index.js
+!dist/index.js.map
