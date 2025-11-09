@@ -15,7 +15,7 @@
   "scripts": {
     "build": "npm run build:tsc && npm run build:action",
     "build:tsc": "tsc",
-    "build:action": "ncc build src/action.ts -o dist-action --source-map --no-source-map-register && cp dist-action/index.js dist/action.js && cp dist-action/index.js.map dist/action.js.map && rm -rf dist-action",
+    "build:action": "ncc build src/action.ts -o dist --source-map --no-source-map-register",
     "build:probot": "npm run build:tsc",
     "package": "npm run build",
     "prepublishOnly": "npm run build",
