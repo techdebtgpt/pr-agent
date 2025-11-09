@@ -20,7 +20,6 @@ async function run() {
             return;
         }
         core.info(`Analyzing PR #${pr.number} in ${repository?.full_name}`);
-        // Get PR diffs
         const diff = await getPRDiffs(context, ghToken);
         if (!diff) {
             core.warning('No changes found in the pull request');
@@ -30,12 +29,9 @@ async function run() {
             core.setFailed('Repository information not available');
             return;
         }
-        // Use LangChain PRAnalyzerAgent
         core.info('Running LangChain agent analysis...');
         const agent = new PRAnalyzerAgent(apiKey, 'claude-sonnet-4-5-20250929');
-        // Analyze with the LangChain agent
         const result = await agent.analyze(diff, pr.title);
-        // Format the summary
         let summary = '';
         if (result.summary) {
             summary += `### Summary\n${result.summary}\n\n`;
@@ -57,7 +53,6 @@ async function run() {
                 summary += `- ${rec}\n`;
             });
         }
-        // Post comment
         await postComment(pr.number, summary, repository, ghToken);
         core.info('Analysis complete!');
     }

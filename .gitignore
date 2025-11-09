@@ -146,8 +146,3 @@ vite.config.ts.timestamp-*
 .idea
 
 .pragent.config.json
-
-dist/*
-!dist/action.js
-!dist/action.js.map
-!dist/licenses.txt
