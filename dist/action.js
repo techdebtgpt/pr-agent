@@ -95458,6 +95458,7 @@ async function run() {
             lib_core.warning('No changes found in the pull request');
             return;
         }
+        lib_core.info(`Diff size: ${diff.length} characters`);
         if (!repository) {
             lib_core.setFailed('Repository information not available');
             return;
@@ -95466,7 +95467,9 @@ async function run() {
         lib_core.info('Running LangChain agent analysis...');
         const agent = new PRAnalyzerAgent(apiKey, 'claude-sonnet-4-5-20250929');
         // Analyze with the LangChain agent
+        lib_core.info('Parsing diff and analyzing...');
         const result = await agent.analyze(diff, pr.title);
+        lib_core.info(`Analysis complete: ${result.fileAnalyses.size} files analyzed`);
         // Format the summary
         let summary = '';
         if (result.summary) {
@@ -95506,7 +95509,16 @@ async function getPRDiffs(context, ghToken) {
             repo: repository.name,
             pull_number: pr.number
         });
-        return files.map((f) => `--- ${f.filename}\n${f.patch}`).join('\n');
+        // Format as proper git diff that parseDiff expects
+        return files.map((f) => {
+            const status = f.status === 'added' ? 'new file mode 100644' :
+                f.status === 'removed' ? 'deleted file mode 100644' : '';
+            const patch = f.patch || '';
+            return `diff --git a/${f.filename} b/${f.filename}
+${status ? status + '\n' : ''}--- ${f.status === 'added' ? '/dev/null' : 'a/' + f.filename}
++++ ${f.status === 'removed' ? '/dev/null' : 'b/' + f.filename}
+${patch}`;
+        }).join('\n');
     }
     catch (error) {
         lib_core.error('Error fetching PR diff:');
