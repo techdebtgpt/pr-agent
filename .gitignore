@@ -146,3 +146,10 @@ vite.config.ts.timestamp-*
 .idea
 
 .pragent.config.json
+
+# Build output - ignore everything in dist/
+dist/*
+
+# Except the GitHub Action bundle (required for Actions to work)
+!dist/action.js
+!dist/action.js.map
