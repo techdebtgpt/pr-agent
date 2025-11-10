@@ -20,8 +20,7 @@ export function displayHelp() {
     console.log('      pr-agent analyze --staged                # Analyze staged changes');
     console.log('      pr-agent analyze --branch develop        # Analyze against develop');
     console.log('      pr-agent analyze --file diff.txt         # Analyze from file');
-    console.log('      pr-agent analyze --full                  # Full analysis (all modes)');
-    console.log('      pr-agent analyze --agent                 # Force intelligent agent\n');
+    console.log('      pr-agent analyze --full                  # Full analysis (all modes)\n');
     console.log(chalk.dim('    Analysis Modes:'));
     console.log('      --summary              Show summary only');
     console.log('      --risks                Show risks only');
@@ -33,8 +32,7 @@ export function displayHelp() {
     console.log('      --file <path>          Read diff from file');
     console.log('      --diff <text>          Provide diff directly\n');
     console.log(chalk.dim('    Advanced Options:'));
-    console.log('      --agent                Force intelligent agent (recommended for large diffs)');
-    console.log('      --provider <provider>  AI provider: claude|openai|google');
+    console.log('      --provider <provider>  AI provider: anthropic|openai|google');
     console.log('      --model <model>        Specific model to use');
     console.log('      --title <text>         PR title (auto-detected from git)');
     console.log('      --max-cost <dollars>   Maximum cost limit (default: $5.00)');
@@ -70,7 +68,6 @@ export function displayHelp() {
     console.log('  • ' + chalk.cyan('Strategic reasoning') + ' about analysis approach');
     console.log('  • ' + chalk.cyan('Contextual recommendations') + ' based on changes');
     console.log('  • ' + chalk.cyan('No chunking required') + ' - handles large diffs intelligently\n');
-    console.log(chalk.dim('  Force agent mode:') + ' pr-agent analyze --agent\n');
     // Environment Variables
     console.log(chalk.bold.yellow('🔑 ENVIRONMENT VARIABLES\n'));
     console.log('  API Keys:');
@@ -85,7 +82,7 @@ export function displayHelp() {
     console.log(chalk.dim('  Example structure:'));
     console.log(chalk.dim(`  {
     "ai": {
-      "provider": "claude",
+      "provider": "anthropic",
       "model": "claude-sonnet-4-5-20250929",
       "temperature": 0.2,
       "maxTokens": 2000
@@ -132,7 +129,7 @@ export function displayHelp() {
     console.log('    git diff > changes.diff');
     console.log('    pr-agent analyze --file changes.diff\n');
     console.log(chalk.bold('  Large PR analysis:'));
-    console.log('    pr-agent analyze --agent --verbose\n');
+    console.log('    pr-agent analyze --verbose\n');
     console.log(chalk.bold('  Custom provider:'));
     console.log('    pr-agent analyze --provider openai --model gpt-4-turbo-preview\n');
     // CI/CD Integration
@@ -151,7 +148,7 @@ export function displayHelp() {
     console.log(chalk.dim('        - pr-agent analyze --full\n'));
     // Tips & Best Practices
     console.log(chalk.bold.yellow('✨ TIPS & BEST PRACTICES\n'));
-    console.log('  • Use ' + chalk.cyan('--agent') + ' for diffs larger than 50KB for better analysis');
+    console.log('  • Use ' + chalk.cyan('--verbose') + ' for detailed analysis output');
     console.log('  • Set ' + chalk.cyan('--max-cost') + ' to control API spending on large PRs');
     console.log('  • Use ' + chalk.cyan('--staged') + ' to review changes before committing');
     console.log('  • Store API keys in ' + chalk.cyan('.pragent.config.json') + ' and add to .gitignore');

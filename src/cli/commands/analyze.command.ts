@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { PRAnalyzerAgent } from '../../agents/pr-analyzer-agent.js';
 import { loadUserConfig, getApiKey } from '../utils/config-loader.js';
+import { archDocsExists } from '../../utils/arch-docs-parser.js';
 
 interface AnalyzeOptions {
   diff?: string;
@@ -20,6 +21,7 @@ interface AnalyzeOptions {
   full?: boolean;
   verbose?: boolean;
   maxCost?: number;
+  archDocs?: boolean;
 }
 
 interface AnalysisMode {
@@ -226,9 +228,6 @@ function estimateDiffSize(diff: string): number {
  *
  * // Full analysis with all modes
  * pr-agent analyze --full
- *
- * // Use intelligent agent
- * pr-agent analyze --agent
  */
 export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
   const spinner = ora('Initializing PR analysis...').start();
@@ -237,17 +236,22 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
     // Load configuration
     const config = await loadUserConfig(false);
     
-    // Get API key from config or environment
-    const provider = options.provider || config.ai?.provider || 'anthropic';
+    // Get provider and API key from config or environment
+    const provider = (options.provider || config.ai?.provider || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
     const apiKey = getApiKey(provider, config);
     
     if (!apiKey) {
       spinner.fail('No API key found');
       console.error(chalk.yellow('💡  Please set it in one of these ways:'));
       console.error(chalk.gray('   1. Run: pr-agent config --init'));
-      console.error(chalk.gray('   2. Set environment variable: export ANTHROPIC_API_KEY="your-api-key"'));
+      console.error(chalk.gray(`   2. Set environment variable based on provider:`));
+      console.error(chalk.gray('      - Anthropic (Claude): export ANTHROPIC_API_KEY="your-api-key"'));
+      console.error(chalk.gray('      - OpenAI (GPT): export OPENAI_API_KEY="your-api-key"'));
+      console.error(chalk.gray('      - Google (Gemini): export GOOGLE_API_KEY="your-api-key"'));
       process.exit(1);
     }
+    
+    spinner.succeed(`Using AI provider: ${provider}`);
 
     // Determine analysis mode
     const mode: AnalysisMode = {
@@ -292,31 +296,47 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       `Diff ready: ~${estimatedTokens.toLocaleString()} tokens (${(diff.length / 1024).toFixed(0)}KB)`,
     );
 
-    // Determine whether to use agent
-    const useAgent = options.agent || diff.length > 50000;
-
-    if (useAgent) {
-      // Use intelligent agent for large diffs or if explicitly requested
+    // Show message for large diffs
+    if (diff.length > 50000) {
       console.log(
         chalk.magenta.bold(
           '\n🤖  Using Intelligent Agent Analysis (handling large diffs without chunking)...\n',
         ),
       );
       console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
-
-      const model = options.model || config.ai?.model || 'claude-sonnet-4-5-20250929';
-      const agent = new PRAnalyzerAgent(apiKey, model);
-      const result = await agent.analyze(diff, title, mode);
-
-      // Display results
-      displayAgentResults(result, mode, options.verbose || false);
+    } else {
+      console.log(chalk.gray('\n🔍 Analyzing changes...\n'));
     }
+
+    // Check for arch-docs
+    const useArchDocs = options.archDocs !== false; // Default to true if not specified
+    const hasArchDocs = archDocsExists();
+    
+    if (useArchDocs && hasArchDocs) {
+      console.log(chalk.cyan('📚 Architecture documentation detected - including in analysis\n'));
+    } else if (options.archDocs && !hasArchDocs) {
+      console.log(chalk.yellow('⚠️  --arch-docs flag specified but no .arch-docs folder found\n'));
+    }
+
+    const model = options.model || config.ai?.model;
+    const agent = new PRAnalyzerAgent({
+      provider: provider as any,
+      apiKey,
+      model,
+    });
+    const result = await agent.analyze(diff, title, mode, {
+      useArchDocs: useArchDocs && hasArchDocs,
+      repoPath: process.cwd(),
+    });
+
+    // Display results
+    displayAgentResults(result, mode, options.verbose || false);
   } catch (error: any) {
     spinner.fail('Analysis failed');
     if (error.message && error.message.includes('rate-limits')) {
       console.error(chalk.red.bold('\n❌  Rate limit error: Your diff is too large for the API.'));
       console.error(
-        chalk.yellow('\n💡  Try using --agent flag for intelligent analysis of large diffs'),
+        chalk.yellow('\n💡  Try reducing the diff size or adjusting maxTokens in config'),
       );
     } else {
       console.error(chalk.red('\nError:'), error instanceof Error ? error.message : error);
@@ -354,16 +374,34 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
 
       filesWithRisks.forEach(([path, analysis]) => {
         console.log(chalk.cyan(`  ${path}`));
-        analysis.risks.forEach((risk: string, i: number) => {
-          const cleanRisk = risk.replace(/^\[File: [^\]]+\]\s*/, '');
-          console.log(chalk.white(`    ${i + 1}. ${cleanRisk}`));
+        analysis.risks.forEach((risk: any, i: number) => {
+          if (typeof risk === 'string') {
+            const cleanRisk = risk.replace(/^\[File: [^\]]+\]\s*/, '');
+            console.log(chalk.white(`    ${i + 1}. ${cleanRisk}`));
+          } else if (typeof risk === 'object' && risk.description) {
+            console.log(chalk.white(`    ${i + 1}. ${risk.description}`));
+            if (risk.archDocsReference) {
+              console.log(chalk.gray(`       📚 From ${risk.archDocsReference.source}:`));
+              console.log(chalk.gray(`       "${risk.archDocsReference.excerpt}"`));
+              console.log(chalk.yellow(`       → ${risk.archDocsReference.reason}`));
+            }
+          }
         });
         console.log('');
       });
     } else if (result.overallRisks.length > 0) {
       console.log(chalk.yellow.bold('⚠️  Overall Risks\n'));
-      result.overallRisks.forEach((risk: string, i: number) => {
-        console.log(chalk.white(`  ${i + 1}. ${risk}`));
+      result.overallRisks.forEach((risk: any, i: number) => {
+        if (typeof risk === 'string') {
+          console.log(chalk.white(`  ${i + 1}. ${risk}`));
+        } else if (typeof risk === 'object' && risk.description) {
+          console.log(chalk.white(`  ${i + 1}. ${risk.description}`));
+          if (risk.archDocsReference) {
+            console.log(chalk.gray(`     📚 From ${risk.archDocsReference.source}:`));
+            console.log(chalk.gray(`     "${risk.archDocsReference.excerpt}"`));
+            console.log(chalk.yellow(`     → ${risk.archDocsReference.reason}`));
+          }
+        }
       });
       console.log('\n');
     } else {
@@ -428,6 +466,36 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
       }
     });
     console.log('\n');
+  }
+
+  // Show arch-docs impact if used
+  if (result.archDocsImpact?.used) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.blue.bold('\n📚 Architecture Documentation Impact\n'));
+    
+    console.log(chalk.white(`Documents analyzed: ${result.archDocsImpact.docsAvailable}`));
+    console.log(chalk.white(`Relevant sections used: ${result.archDocsImpact.sectionsUsed}\n`));
+    
+    if (result.archDocsImpact.influencedStages.length > 0) {
+      console.log(chalk.cyan('Stages influenced by arch-docs:'));
+      result.archDocsImpact.influencedStages.forEach((stage: string) => {
+        const stageEmoji = stage === 'file-analysis' ? '🔍' :
+                          stage === 'risk-detection' ? '⚠️' :
+                          stage === 'complexity-calculation' ? '📊' :
+                          stage === 'summary-generation' ? '📝' :
+                          stage === 'refinement' ? '🔄' : '✨';
+        console.log(chalk.white(`  ${stageEmoji} ${stage}`));
+      });
+      console.log('');
+    }
+    
+    if (result.archDocsImpact.keyInsights.length > 0) {
+      console.log(chalk.cyan('Key insights from arch-docs integration:\n'));
+      result.archDocsImpact.keyInsights.forEach((insight: string, i: number) => {
+        console.log(chalk.white(`  ${i + 1}. ${insight}`));
+      });
+      console.log('');
+    }
   }
 
   if (result.totalTokensUsed) {

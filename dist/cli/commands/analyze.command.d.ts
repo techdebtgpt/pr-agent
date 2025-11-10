@@ -13,6 +13,7 @@ interface AnalyzeOptions {
     full?: boolean;
     verbose?: boolean;
     maxCost?: number;
+    archDocs?: boolean;
 }
 /**
  * Analyze command - analyze PR diffs with AI
@@ -35,9 +36,6 @@ interface AnalyzeOptions {
  *
  * // Full analysis with all modes
  * pr-agent analyze --full
- *
- * // Use intelligent agent
- * pr-agent analyze --agent
  */
 export declare function analyzePR(options?: AnalyzeOptions): Promise<void>;
 export {};

@@ -6,13 +6,24 @@
 import { BasePRAgentWorkflow } from './base-pr-agent-workflow.js';
 import { AgentContext, AgentResult, AgentMetadata, AnalysisMode } from '../types/agent.types.js';
 import { parseDiff } from '../tools/pr-analysis-tools.js';
+import { ProviderFactory, ProviderOptions } from '../providers/index.js';
+import { parseAllArchDocs, archDocsExists } from '../utils/arch-docs-parser.js';
+import { buildArchDocsContext } from '../utils/arch-docs-rag.js';
 
 /**
  * PR Analysis Agent using LangChain and LangGraph
  */
 export class PRAnalyzerAgent extends BasePRAgentWorkflow {
-  constructor(apiKey: string, modelName: string = 'claude-sonnet-4-5-20250929') {
-    super(apiKey, modelName);
+  constructor(options: ProviderOptions = {}) {
+    const model = ProviderFactory.createChatModel({
+      provider: options.provider || 'anthropic',
+      apiKey: options.apiKey,
+      model: options.model,
+      temperature: options.temperature ?? 0.2,
+      maxTokens: options.maxTokens ?? 4000,
+    });
+    
+    super(model);
   }
 
   /**
@@ -40,9 +51,17 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     diff: string,
     title?: string,
     mode?: AnalysisMode,
+    options?: { useArchDocs?: boolean; repoPath?: string }
   ): Promise<AgentResult> {
     // Parse diff into files
     const files = parseDiff(diff);
+
+    // Build arch-docs context if enabled
+    let archDocsContext = undefined;
+    if (options?.useArchDocs !== false && archDocsExists(options?.repoPath)) {
+      const docs = parseAllArchDocs(options?.repoPath);
+      archDocsContext = buildArchDocsContext(docs, { title, files, diff });
+    }
 
     // Create context
     const context: AgentContext = {
@@ -52,6 +71,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       tokenBudget: 100000,
       maxCost: 5.0,
       mode: mode || { summary: true, risks: true, complexity: true },
+      archDocs: archDocsContext,
     };
 
     // Execute workflow
@@ -65,8 +85,15 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
   /**
    * Quick analysis without refinement
    */
-  async quickAnalyze(diff: string, title?: string): Promise<AgentResult> {
+  async quickAnalyze(diff: string, title?: string, options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResult> {
     const files = parseDiff(diff);
+
+    // Build arch-docs context if enabled
+    let archDocsContext = undefined;
+    if (options?.useArchDocs !== false && archDocsExists(options?.repoPath)) {
+      const docs = parseAllArchDocs(options?.repoPath);
+      archDocsContext = buildArchDocsContext(docs, { title, files, diff });
+    }
 
     const context: AgentContext = {
       diff,
@@ -75,6 +102,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       tokenBudget: 50000,
       maxCost: 2.0,
       mode: { summary: true, risks: true, complexity: true },
+      archDocs: archDocsContext,
     };
 
     return this.execute(context, {
@@ -85,9 +113,16 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
   /**
    * Analyze specific files only
    */
-  async analyzeFiles(diff: string, filePaths: string[]): Promise<AgentResult> {
+  async analyzeFiles(diff: string, filePaths: string[], options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResult> {
     const allFiles = parseDiff(diff);
     const files = allFiles.filter(f => filePaths.includes(f.path));
+
+    // Build arch-docs context if enabled
+    let archDocsContext = undefined;
+    if (options?.useArchDocs !== false && archDocsExists(options?.repoPath)) {
+      const docs = parseAllArchDocs(options?.repoPath);
+      archDocsContext = buildArchDocsContext(docs, { files, diff });
+    }
 
     const context: AgentContext = {
       diff,
@@ -95,6 +130,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       tokenBudget: 50000,
       maxCost: 2.0,
       mode: { summary: true, risks: true, complexity: true },
+      archDocs: archDocsContext,
     };
 
     return this.execute(context, {
@@ -124,7 +160,19 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
 /**
  * Factory function to create PR analyzer agent
  */
-export function createPRAnalyzerAgent(apiKey: string, modelName?: string): PRAnalyzerAgent {
-  return new PRAnalyzerAgent(apiKey, modelName);
+export function createPRAnalyzerAgent(options: ProviderOptions = {}): PRAnalyzerAgent {
+  return new PRAnalyzerAgent(options);
+}
+
+/**
+ * Legacy factory function for backward compatibility
+ * @deprecated Use PRAnalyzerAgent constructor with ProviderOptions instead
+ */
+export function createPRAnalyzerAgentLegacy(apiKey: string, modelName?: string): PRAnalyzerAgent {
+  return new PRAnalyzerAgent({ 
+    apiKey, 
+    model: modelName,
+    provider: 'anthropic'
+  });
 }
 

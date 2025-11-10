@@ -13,6 +13,19 @@ export interface DiffFile {
   oldPath?: string;
 }
 
+export interface ArchDocsContext {
+  available: boolean;
+  summary: string;
+  relevantDocs: Array<{
+    filename: string;
+    title: string;
+    section: string;
+    content: string;
+    relevance: number;
+  }>;
+  totalDocs: number;
+}
+
 export interface AgentContext {
   diff: string;
   title?: string;
@@ -23,6 +36,7 @@ export interface AgentContext {
   maxCost: number;
   mode: AnalysisMode;
   config?: Record<string, unknown>;
+  archDocs?: ArchDocsContext; // Architecture documentation context
 }
 
 export interface AnalysisMode {
@@ -31,10 +45,19 @@ export interface AnalysisMode {
   complexity: boolean;
 }
 
+export interface RiskItem {
+  description: string;
+  archDocsReference?: {
+    source: string; // Which arch-doc (e.g., 'security.md', 'patterns.md')
+    excerpt: string; // Relevant excerpt from arch-docs
+    reason: string; // Why this is a risk based on arch-docs
+  };
+}
+
 export interface FileAnalysis {
   path: string;
   summary: string;
-  risks: string[];
+  risks: string[] | RiskItem[];
   complexity: number;
   changes: {
     additions: number;
@@ -47,7 +70,7 @@ export interface AgentResult {
   summary: string;
   fileAnalyses: Map<string, FileAnalysis>;
   overallComplexity: number;
-  overallRisks: string[];
+  overallRisks: string[] | RiskItem[];
   recommendations: string[];
   insights: string[];
   reasoning: string[];
@@ -56,6 +79,13 @@ export interface AgentResult {
   totalTokensUsed: number;
   executionTime: number;
   mode: AnalysisMode;
+  archDocsImpact?: {
+    used: boolean;
+    docsAvailable: number;
+    sectionsUsed: number;
+    influencedStages: string[];
+    keyInsights: string[];
+  };
 }
 
 // Alias for backward compatibility

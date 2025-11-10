@@ -1,7 +1,9 @@
 import { Probot } from 'probot';
 import { PRAnalyzerAgent } from './agents/pr-analyzer-agent.js';
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
+const provider = (process.env.AI_PROVIDER || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
+const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_API_KEY;
+const model = process.env.AI_MODEL;
 
 /**
  * Format agent analysis result for GitHub comment
@@ -71,12 +73,16 @@ export default (app: Probot) => {
       const diff = await getPRDiffs(context);
 
       if (!apiKey) {
-        throw new Error('Anthropic API key is not set');
+        throw new Error('AI provider API key is not set (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)');
       }
 
       // Use LangChain agent for intelligent analysis
-      app.log.info('Running LangChain agent analysis...');
-      const agent = new PRAnalyzerAgent(apiKey);
+      app.log.info(`Running LangChain agent analysis with ${provider}...`);
+      const agent = new PRAnalyzerAgent({
+        provider: provider as any,
+        apiKey,
+        model,
+      });
       const result = await agent.analyze(diff, pr.title);
 
       // Format the analysis for GitHub comment

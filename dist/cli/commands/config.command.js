@@ -90,16 +90,16 @@ async function initializeConfig() {
             name: 'provider',
             message: 'Select AI provider:',
             choices: [
-                { name: 'Anthropic Claude (Recommended)', value: 'claude' },
+                { name: 'Anthropic Claude (Recommended)', value: 'anthropic' },
                 { name: 'OpenAI GPT', value: 'openai' },
                 { name: 'Google Gemini', value: 'google' },
             ],
-            default: 'claude',
+            default: 'anthropic',
         },
     ]);
     // Model selection based on provider
     let modelChoices = [];
-    if (provider === 'claude') {
+    if (provider === 'anthropic') {
         modelChoices = [
             { name: 'Claude Sonnet 4.5 (Recommended)', value: 'claude-sonnet-4-5-20250929' },
             { name: 'Claude Sonnet 3.5', value: 'claude-3-5-sonnet-20241022' },

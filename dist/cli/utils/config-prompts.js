@@ -28,17 +28,17 @@ export async function promptFullConfig(projectPath, options = {}) {
             name: 'provider',
             message: 'Select AI provider:',
             choices: [
-                { name: 'Anthropic Claude (Recommended)', value: 'claude' },
+                { name: 'Anthropic Claude (Recommended)', value: 'anthropic' },
                 { name: 'OpenAI GPT', value: 'openai' },
                 { name: 'Google Gemini', value: 'google' },
             ],
-            default: existingConfig?.ai?.provider || 'claude',
+            default: existingConfig?.ai?.provider || 'anthropic',
         },
     ]);
     // Model selection based on provider
     let modelChoices = [];
     let defaultModel = '';
-    if (provider === 'claude') {
+    if (provider === 'anthropic') {
         modelChoices = [
             { name: 'Claude Sonnet 4.5 (Recommended)', value: 'claude-sonnet-4-5-20250929' },
             { name: 'Claude Sonnet 3.5', value: 'claude-3-5-sonnet-20241022' },
@@ -48,7 +48,7 @@ export async function promptFullConfig(projectPath, options = {}) {
     }
     else if (provider === 'openai') {
         modelChoices = [
-            { name: 'GPT-4 Turbo', value: 'gpt-4-turbo-preview' },
+            { name: 'GPT-4 Turbo (Recommended)', value: 'gpt-4-turbo-preview' },
             { name: 'GPT-4', value: 'gpt-4' },
             { name: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
         ];
@@ -56,8 +56,8 @@ export async function promptFullConfig(projectPath, options = {}) {
     }
     else if (provider === 'google') {
         modelChoices = [
-            { name: 'Gemini Pro', value: 'gemini-pro' },
-            { name: 'Gemini Ultra', value: 'gemini-ultra' },
+            { name: 'Gemini Pro (Recommended)', value: 'gemini-pro' },
+            { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
         ];
         defaultModel = 'gemini-pro';
     }
@@ -131,11 +131,11 @@ export async function promptProvider(defaultProvider) {
             name: 'provider',
             message: 'Select AI provider:',
             choices: [
-                { name: 'Anthropic Claude', value: 'claude' },
+                { name: 'Anthropic Claude', value: 'anthropic' },
                 { name: 'OpenAI GPT', value: 'openai' },
                 { name: 'Google Gemini', value: 'google' },
             ],
-            default: defaultProvider || 'claude',
+            default: defaultProvider || 'anthropic',
         },
     ]);
     return provider;

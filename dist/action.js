@@ -3,16 +3,20 @@ import * as github from '@actions/github';
 import { PRAnalyzerAgent } from './agents/pr-analyzer-agent.js';
 async function run() {
     try {
-        const apiKey = process.env.ANTHROPIC_API_KEY;
+        // Get provider configuration from environment
+        const provider = (process.env.AI_PROVIDER || 'anthropic').toLowerCase();
+        const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_API_KEY;
+        const model = process.env.AI_MODEL;
         const ghToken = process.env.GITHUB_TOKEN;
         if (!apiKey) {
-            core.setFailed('ANTHROPIC_API_KEY environment variable is required');
+            core.setFailed('AI provider API key is required (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)');
             return;
         }
         if (!ghToken) {
             core.setFailed('GITHUB_TOKEN environment variable is required');
             return;
         }
+        core.info(`Using AI provider: ${provider}${model ? ` with model: ${model}` : ''}`);
         const { context } = github;
         const { pull_request: pr, repository } = context.payload;
         if (!pr) {
@@ -33,7 +37,11 @@ async function run() {
         }
         // Use LangChain PRAnalyzerAgent
         core.info('Running LangChain agent analysis...');
-        const agent = new PRAnalyzerAgent(apiKey, 'claude-sonnet-4-5-20250929');
+        const agent = new PRAnalyzerAgent({
+            provider,
+            apiKey,
+            model,
+        });
         // Analyze with the LangChain agent
         core.info('Parsing diff and analyzing...');
         const result = await agent.analyze(diff, pr.title);
@@ -46,7 +54,16 @@ async function run() {
         if (result.overallRisks.length > 0) {
             summary += `### Potential Risks\n`;
             result.overallRisks.forEach((risk) => {
-                summary += `- ${risk}\n`;
+                if (typeof risk === 'string') {
+                    summary += `- ${risk}\n`;
+                }
+                else if (typeof risk === 'object' && risk.description) {
+                    summary += `- **${risk.description}**\n`;
+                    if (risk.archDocsReference) {
+                        summary += `  - 📚 *From ${risk.archDocsReference.source}*: "${risk.archDocsReference.excerpt}"\n`;
+                        summary += `  - *Reason*: ${risk.archDocsReference.reason}\n`;
+                    }
+                }
             });
             summary += '\n';
         }

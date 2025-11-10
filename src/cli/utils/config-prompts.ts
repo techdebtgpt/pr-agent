@@ -49,11 +49,11 @@ export async function promptFullConfig(
       name: 'provider',
       message: 'Select AI provider:',
       choices: [
-        { name: 'Anthropic Claude (Recommended)', value: 'claude' },
+        { name: 'Anthropic Claude (Recommended)', value: 'anthropic' },
         { name: 'OpenAI GPT', value: 'openai' },
         { name: 'Google Gemini', value: 'google' },
       ],
-      default: existingConfig?.ai?.provider || 'claude',
+      default: existingConfig?.ai?.provider || 'anthropic',
     },
   ]);
 
@@ -61,7 +61,7 @@ export async function promptFullConfig(
   let modelChoices: { name: string; value: string }[] = [];
   let defaultModel = '';
 
-  if (provider === 'claude') {
+  if (provider === 'anthropic') {
     modelChoices = [
       { name: 'Claude Sonnet 4.5 (Recommended)', value: 'claude-sonnet-4-5-20250929' },
       { name: 'Claude Sonnet 3.5', value: 'claude-3-5-sonnet-20241022' },
@@ -70,15 +70,15 @@ export async function promptFullConfig(
     defaultModel = 'claude-sonnet-4-5-20250929';
   } else if (provider === 'openai') {
     modelChoices = [
-      { name: 'GPT-4 Turbo', value: 'gpt-4-turbo-preview' },
+      { name: 'GPT-4 Turbo (Recommended)', value: 'gpt-4-turbo-preview' },
       { name: 'GPT-4', value: 'gpt-4' },
       { name: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
     ];
     defaultModel = 'gpt-4-turbo-preview';
   } else if (provider === 'google') {
     modelChoices = [
-      { name: 'Gemini Pro', value: 'gemini-pro' },
-      { name: 'Gemini Ultra', value: 'gemini-ultra' },
+      { name: 'Gemini Pro (Recommended)', value: 'gemini-pro' },
+      { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
     ];
     defaultModel = 'gemini-pro';
   }
@@ -160,11 +160,11 @@ export async function promptProvider(defaultProvider?: string): Promise<string> 
       name: 'provider',
       message: 'Select AI provider:',
       choices: [
-        { name: 'Anthropic Claude', value: 'claude' },
+        { name: 'Anthropic Claude', value: 'anthropic' },
         { name: 'OpenAI GPT', value: 'openai' },
         { name: 'Google Gemini', value: 'google' },
       ],
-      default: defaultProvider || 'claude',
+      default: defaultProvider || 'anthropic',
     },
   ]);
 

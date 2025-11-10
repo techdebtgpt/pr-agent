@@ -11,6 +11,18 @@ export interface DiffFile {
     status?: 'A' | 'M' | 'D' | 'R';
     oldPath?: string;
 }
+export interface ArchDocsContext {
+    available: boolean;
+    summary: string;
+    relevantDocs: Array<{
+        filename: string;
+        title: string;
+        section: string;
+        content: string;
+        relevance: number;
+    }>;
+    totalDocs: number;
+}
 export interface AgentContext {
     diff: string;
     title?: string;
@@ -21,16 +33,25 @@ export interface AgentContext {
     maxCost: number;
     mode: AnalysisMode;
     config?: Record<string, unknown>;
+    archDocs?: ArchDocsContext;
 }
 export interface AnalysisMode {
     summary: boolean;
     risks: boolean;
     complexity: boolean;
 }
+export interface RiskItem {
+    description: string;
+    archDocsReference?: {
+        source: string;
+        excerpt: string;
+        reason: string;
+    };
+}
 export interface FileAnalysis {
     path: string;
     summary: string;
-    risks: string[];
+    risks: string[] | RiskItem[];
     complexity: number;
     changes: {
         additions: number;
@@ -42,7 +63,7 @@ export interface AgentResult {
     summary: string;
     fileAnalyses: Map<string, FileAnalysis>;
     overallComplexity: number;
-    overallRisks: string[];
+    overallRisks: string[] | RiskItem[];
     recommendations: string[];
     insights: string[];
     reasoning: string[];
@@ -51,6 +72,13 @@ export interface AgentResult {
     totalTokensUsed: number;
     executionTime: number;
     mode: AnalysisMode;
+    archDocsImpact?: {
+        used: boolean;
+        docsAvailable: number;
+        sectionsUsed: number;
+        influencedStages: string[];
+        keyInsights: string[];
+    };
 }
 export type AgentAnalysisResult = AgentResult;
 export interface AgentMetadata {

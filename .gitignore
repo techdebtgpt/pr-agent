@@ -153,3 +153,6 @@ dist/*
 # Except the GitHub Action bundle (required for Actions to work)
 !dist/index.js
 !dist/index.js.map
+
+# ArchDoc configuration (contains API keys)
+.archdoc.config.json

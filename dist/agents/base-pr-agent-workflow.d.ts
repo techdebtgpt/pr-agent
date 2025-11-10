@@ -3,7 +3,7 @@
  * Follows architecture-doc-generator patterns with self-refinement
  */
 import { MemorySaver } from '@langchain/langgraph';
-import { ChatAnthropic } from '@langchain/anthropic';
+import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { AgentContext, AgentResult, FileAnalysis, AgentExecutionOptions } from '../types/agent.types.js';
 /**
  * Agent workflow state
@@ -13,13 +13,15 @@ export declare const PRAgentState: import("@langchain/langgraph").AnnotationRoot
     iteration: import("@langchain/langgraph").BinaryOperatorAggregate<number, number>;
     fileAnalyses: import("@langchain/langgraph").BinaryOperatorAggregate<Map<string, FileAnalysis>, Map<string, FileAnalysis>>;
     currentSummary: import("@langchain/langgraph").BinaryOperatorAggregate<string, string>;
-    currentRisks: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
+    currentRisks: import("@langchain/langgraph").BinaryOperatorAggregate<any[], any[]>;
     currentComplexity: import("@langchain/langgraph").BinaryOperatorAggregate<number, number>;
     clarityScore: import("@langchain/langgraph").BinaryOperatorAggregate<number, number>;
     missingInformation: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
     recommendations: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
     insights: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
     reasoning: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
+    archDocsInfluencedStages: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
+    archDocsKeyInsights: import("@langchain/langgraph").BinaryOperatorAggregate<string[], string[]>;
     totalInputTokens: import("@langchain/langgraph").BinaryOperatorAggregate<number, number>;
     totalOutputTokens: import("@langchain/langgraph").BinaryOperatorAggregate<number, number>;
 }>;
@@ -35,11 +37,11 @@ export interface PRAgentWorkflowConfig {
  * Base class for PR agents with self-refinement workflow
  */
 export declare abstract class BasePRAgentWorkflow {
-    protected model: ChatAnthropic;
+    protected model: BaseChatModel;
     protected workflow: ReturnType<typeof this.buildWorkflow>;
     protected checkpointer: MemorySaver;
     protected tools: any[];
-    constructor(apiKey: string, modelName?: string);
+    constructor(model: BaseChatModel);
     /**
      * Build the PR analysis workflow
      */
@@ -49,7 +51,7 @@ export declare abstract class BasePRAgentWorkflow {
      */
     execute(context: AgentContext, options?: AgentExecutionOptions): Promise<AgentResult>;
     /**
-     * Fast path execution - skip refinement
+     * Fast path execution - skip refinement loop but still use LLM for detailed analysis
      */
     private executeFastPath;
     private analyzeFilesNode;

@@ -85,7 +85,6 @@ export function getApiKey(provider, config) {
     }
     // Fall back to environment variables
     const envVarMap = {
-        claude: 'ANTHROPIC_API_KEY',
         anthropic: 'ANTHROPIC_API_KEY',
         openai: 'OPENAI_API_KEY',
         google: 'GOOGLE_API_KEY',

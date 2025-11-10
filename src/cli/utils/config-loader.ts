@@ -130,7 +130,6 @@ export function getApiKey(provider: string, config?: UserConfig): string | undef
 
   // Fall back to environment variables
   const envVarMap: Record<string, string> = {
-    claude: 'ANTHROPIC_API_KEY',
     anthropic: 'ANTHROPIC_API_KEY',
     openai: 'OPENAI_API_KEY',
     google: 'GOOGLE_API_KEY',
