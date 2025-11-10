@@ -14,6 +14,7 @@ export interface AnalysisRequest {
     files?: string[];
     repository?: string;
     prNumber?: number;
+    outputFormat?: 'terminal' | 'markdown';
 }
 export interface AnalysisResponse {
     summary: string;

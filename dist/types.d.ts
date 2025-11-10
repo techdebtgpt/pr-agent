@@ -1,4 +1,4 @@
-import { AIProviderType } from './providers/types';
+export type AIProviderType = 'anthropic' | 'openai' | 'google';
 export interface PRInfo {
     number: number;
     title: string;

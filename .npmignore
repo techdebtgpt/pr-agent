@@ -1,0 +1,39 @@
+# Source files
+src/
+tests/
+*.test.ts
+*.spec.ts
+
+# Development files
+tsconfig.json
+tsconfig.tsbuildinfo
+jest.config.js
+.gitignore
+.github/
+
+# Build artifacts (we only want the compiled dist)
+*.tsbuildinfo
+
+# Node modules (will be installed by users)
+node_modules/
+
+# Development files
+*.log
+*.tgz
+.DS_Store
+.vscode/
+.idea/
+
+# Action-specific files
+action.yml
+dist/action.js
+dist/action.js.map
+dist/action.d.ts
+
+# Documentation that might not be needed
+# Keep README.md and LICENSE
+
+# Package files
+package-lock.json
+pr-agent-*.tgz
+
