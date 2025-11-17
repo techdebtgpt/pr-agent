@@ -11,6 +11,7 @@ export declare class ClaudeProvider extends BaseAIProvider {
     getCapabilities(): ProviderCapabilities;
     /**
      * Claude-optimized prompt building
+     * Uses base class method which handles outputFormat
      */
     protected buildPrompt(request: AnalysisRequest): string;
 }

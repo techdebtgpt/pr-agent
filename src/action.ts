@@ -1,16 +1,17 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { analyzeWithClaude } from './analyzer';
-import { suggestFixFromComment, prepareFileReplacement } from './actions/code-suggestion/codesugestions';
+import { PRAnalyzerAgent } from './agents/pr-analyzer-agent.js';
 
 async function run() {
   try {
-    const configPath = core.getInput('config-path');
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    // Get provider configuration from environment
+    const provider = (process.env.AI_PROVIDER || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
+    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_API_KEY;
+    const model = process.env.AI_MODEL;
     const ghToken = process.env.GITHUB_TOKEN;
 
     if (!apiKey) {
-      core.setFailed('ANTHROPIC_API_KEY environment variable is required');
+      core.setFailed('AI provider API key is required (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)');
       return;
     }
 
@@ -18,6 +19,8 @@ async function run() {
       core.setFailed('GITHUB_TOKEN environment variable is required');
       return;
     }
+    
+    core.info(`Using AI provider: ${provider}${model ? ` with model: ${model}` : ''}`);
 
     const { context } = github;
     const { pull_request: pr, repository } = context.payload;
@@ -36,12 +39,66 @@ async function run() {
       core.warning('No changes found in the pull request');
       return;
     }
-    const octokit = github.getOctokit(ghToken);
-    // Analyze with Claude
-    const summary = await analyzeWithClaude(diff, pr.title, apiKey);
+    
+    core.info(`Diff size: ${diff.length} characters`);
+    
+    if (!repository) {
+      core.setFailed('Repository information not available');
+      return;
+    }
+
+    // Use LangChain PRAnalyzerAgent
+    core.info('Running LangChain agent analysis...');
+    const agent = new PRAnalyzerAgent({
+      provider,
+      apiKey,
+      model,
+    });
+
+    // Analyze with the LangChain agent
+    core.info('Parsing diff and analyzing...');
+    const result = await agent.analyze(diff, pr.title);
+    
+    core.info(`Analysis complete: ${result.fileAnalyses.size} files analyzed`);
+
+    // Format the summary
+    let summary = '';
+    
+    if (result.summary) {
+      summary += `### Summary\n${result.summary}\n\n`;
+    }
+    
+    if (result.overallRisks.length > 0) {
+      summary += `### Potential Risks\n`;
+      result.overallRisks.forEach((risk: any) => {
+        if (typeof risk === 'string') {
+          summary += `- ${risk}\n`;
+        } else if (typeof risk === 'object' && risk.description) {
+          summary += `- **${risk.description}**\n`;
+          if (risk.archDocsReference) {
+            summary += `  - 📚 *From ${risk.archDocsReference.source}*: "${risk.archDocsReference.excerpt}"\n`;
+            summary += `  - *Reason*: ${risk.archDocsReference.reason}\n`;
+          }
+        }
+      });
+      summary += '\n';
+    } else {
+      summary += `### Potential Risks\nNone\n\n`;
+    }
+    
+    summary += `### Complexity: ${result.overallComplexity}/5\n`;
+    
+    if (result.recommendations && result.recommendations.length > 0) {
+      summary += `\n### Recommendations\n`;
+      result.recommendations.forEach((rec: string) => {
+        summary += `- ${rec}\n`;
+      });
+    }
 
     // Post comment
-    await postComment(context, pr.number, summary, repository!, ghToken);
+    await postComment(pr.number, summary, repository, ghToken);
+
+    core.info('Analysis complete!');
 
   } catch (error) {
     core.setFailed(`Action failed with error: ${error}`);
@@ -60,7 +117,17 @@ async function getPRDiffs(context: any, ghToken: string): Promise<string> {
       pull_number: pr.number
     });
 
-    return files.map((f: any) => `--- ${f.filename}\n${f.patch}`).join('\n');
+    // Format as proper git diff that parseDiff expects
+    return files.map((f: any) => {
+      const status = f.status === 'added' ? 'new file mode 100644' : 
+                     f.status === 'removed' ? 'deleted file mode 100644' : '';
+      const patch = f.patch || '';
+      
+      return `diff --git a/${f.filename} b/${f.filename}
+${status ? status + '\n' : ''}--- ${f.status === 'added' ? '/dev/null' : 'a/' + f.filename}
++++ ${f.status === 'removed' ? '/dev/null' : 'b/' + f.filename}
+${patch}`;
+    }).join('\n');
   } catch (error) {
     core.error('Error fetching PR diff:');
     core.error(String(error));
@@ -68,7 +135,7 @@ async function getPRDiffs(context: any, ghToken: string): Promise<string> {
   }
 }
 
-async function postComment(context: any, prNumber: number, summary: string, repository: any, ghToken: string) {
+async function postComment(prNumber: number, summary: string, repository: any, ghToken: string) {
   try {
     const octokit = github.getOctokit(ghToken);
 
@@ -86,4 +153,3 @@ async function postComment(context: any, prNumber: number, summary: string, repo
 }
 
 run();
-

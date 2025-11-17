@@ -144,3 +144,15 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 .idea
+
+.pragent.config.json
+
+# Build output - ignore everything in dist/
+dist/*
+
+# Except the GitHub Action bundle (required for Actions to work)
+!dist/index.js
+!dist/index.js.map
+
+# ArchDoc configuration (contains API keys)
+.archdoc.config.json

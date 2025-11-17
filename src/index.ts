@@ -1,11 +1,67 @@
 import { Probot } from 'probot';
-import { analyzeWithClaude } from './analyzer';
-import { suggestFixFromComment } from './actions/code-suggestion/codesugestions';
+import { PRAnalyzerAgent } from './agents/pr-analyzer-agent.js';
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
+const provider = (process.env.AI_PROVIDER || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
+const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_API_KEY;
+const model = process.env.AI_MODEL;
 
-export = (app: Probot) => {
-  app.log.info('🤖 TDGPT started');
+/**
+ * Format agent analysis result for GitHub comment
+ */
+function formatAnalysisForGitHub(result: any): string {
+  let output = '';
+
+  // Summary
+  if (result.summary) {
+    output += `### 📋 Summary\n${result.summary}\n\n`;
+  }
+
+  // Risks
+  if (result.overallRisks && result.overallRisks.length > 0) {
+    output += `### ⚠️ Risks Identified\n`;
+    result.overallRisks.forEach((risk: string, i: number) => {
+      output += `${i + 1}. ${risk}\n`;
+    });
+    output += '\n';
+  }
+
+  // Complexity
+  if (result.overallComplexity) {
+    output += `### 📊 Complexity Score: ${result.overallComplexity}/5\n\n`;
+  }
+
+  // Recommendations
+  if (result.recommendations && result.recommendations.length > 0) {
+    output += `### 💡 Recommendations\n`;
+    result.recommendations.forEach((rec: string, i: number) => {
+      output += `${i + 1}. ${rec}\n`;
+    });
+    output += '\n';
+  }
+
+  // File-level details (top 5 most complex)
+  if (result.fileAnalyses && result.fileAnalyses.size > 0) {
+    const files = Array.from(result.fileAnalyses.entries()) as Array<[string, any]>;
+    const sortedFiles = files
+      .sort((a, b) => b[1].complexity - a[1].complexity)
+      .slice(0, 5);
+
+    if (sortedFiles.length > 0) {
+      output += `### 📁 Files of Interest\n`;
+      sortedFiles.forEach(([path, analysis]) => {
+        output += `- **${path}** (complexity: ${analysis.complexity}/5)\n`;
+        if (analysis.risks && analysis.risks.length > 0) {
+          output += `  - ⚠️ ${analysis.risks.join(', ')}\n`;
+        }
+      });
+    }
+  }
+
+  return output;
+}
+
+export default (app: Probot) => {
+  app.log.info('🤖 PR Agent (LangChain) started');
 
   app.on(['pull_request.opened', 'pull_request.synchronize'], async (context) => {
     const { pull_request: pr, repository } = context.payload;
@@ -16,18 +72,27 @@ export = (app: Probot) => {
       app.log.info('Getting PR diffs');
       const diff = await getPRDiffs(context);
 
-      
       if (!apiKey) {
-        throw new Error('Anthropic API key is not set');
+        throw new Error('AI provider API key is not set (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)');
       }
 
-      const summary = await analyzeWithClaude(diff, pr.title, apiKey);
+      // Use LangChain agent for intelligent analysis
+      app.log.info(`Running LangChain agent analysis with ${provider}...`);
+      const agent = new PRAnalyzerAgent({
+        provider: provider as any,
+        apiKey,
+        model,
+      });
+      const result = await agent.analyze(diff, pr.title);
+
+      // Format the analysis for GitHub comment
+      const summary = formatAnalysisForGitHub(result);
       
       await context.octokit.issues.createComment({
         owner: repository.owner.login,
         repo: repository.name,
         issue_number: pr.number,
-        body: `## 🤖 AI Analysis\n\n${summary}`
+        body: `## 🤖 AI Analysis (LangChain Agent)\n\n${summary}`
       });
 
       app.log.info(`Analysis posted for PR #${pr.number}`);
@@ -37,76 +102,15 @@ export = (app: Probot) => {
     }
   });
 
-  app.on(['pull_request_review_comment.created', 'pull_request_review_comment.edited'], async (context) => {
-    const { comment, pull_request: pr, repository } = context.payload;
-    const octokit = context.octokit;
-
-    // Prevent infinite loop: ignore comments from bots (including our own)
-    // Check both comment.user.type and sender type to catch all bot comments
-    const isBotComment = comment.user.type === 'Bot' || 
-                         context.payload.sender?.type === 'Bot' ||
-                         (comment.user.login && comment.user.login.includes('[bot]'));
-    
-    if (isBotComment) {
-      app.log.info(`Skipping bot comment #${comment.id} from ${comment.user.login} to prevent infinite loop`);
-      return;
-    }
-
-    app.log.info(`Analyzing review comment #${comment.id} in PR #${pr.number} in ${repository.full_name}`);
-
-    try {
-      if (!comment.path) {
-        app.log.warn('Review comment has no path, skipping');
-        return;
-      }
-
-      if (!apiKey) {
-        throw new Error('Anthropic API key is not set');
-      }
-
-      const contentResp = await octokit.rest.repos.getContent({
-        owner: repository.owner.login,
-        repo: repository.name,
-        path: comment.path,
-        ref: pr.head.sha
-      });
-
-      let fileContent = '';
-      const data = contentResp.data as any;
-      if (Array.isArray(data) && data.length > 0) {
-        fileContent = data[0].content ?? '';
-        if (data[0].encoding === 'base64') fileContent = Buffer.from(fileContent, 'base64').toString('utf8');
-      } else if (data.content) {
-        fileContent = data.content;
-        if (data.encoding === 'base64') fileContent = Buffer.from(fileContent, 'base64').toString('utf8');
-      }
-
-      const suggestion = await suggestFixFromComment({
-        pr,
-        reviewerComment: comment.body,
-        filePath: comment.path,
-        codeSnippet: fileContent,
-        apiKey: apiKey
-      });
-
-      if (suggestion && suggestion.trim() !== 'NO CHANGE') {
-        await octokit.rest.pulls.createReviewComment({
-          owner: repository.owner.login,
-          repo: repository.name,
-          pull_number: pr.number,
-          body: `### 🤖 AI suggested fix\n\n\`\`\`\n${suggestion}\n\`\`\``,
-          in_reply_to: comment.id,
-          commit_id: pr.head.sha,
-          path: comment.path,
-          line: comment.line || comment.original_line || undefined
-        });
-
-        app.log.info(`Posted AI suggestion reply for comment #${comment.id} in ${comment.path}`);
-      }
-    } catch (error: any) {
-      app.log.error(`Error analyzing review comment #${comment.id}:`, error);
-    }
-  });
+  // TODO: Re-implement code suggestions using the new agent's code suggestion tool
+  // The old code suggestion implementation has been removed
+  // To implement this feature:
+  // 1. Use the agent's createCodeSuggestionTool() from tools/pr-analysis-tools.ts
+  // 2. Call the agent with the tool to generate code fixes based on reviewer comments
+  // 
+  // app.on(['pull_request_review_comment.created', 'pull_request_review_comment.edited'], async (context) => {
+  //   // Implementation goes here
+  // });
 };
 
 async function getPRDiffs(context: any): Promise<string> {
