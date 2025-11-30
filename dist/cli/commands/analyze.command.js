@@ -60,11 +60,31 @@ async function getGitDiff(command) {
             }
             catch {
                 // Fallback to main branch
-                console.log(chalk.yellow('⚠️  origin/main not found, trying main branch...'));
-                diff = execSync('git diff main', {
-                    encoding: 'utf-8',
-                    maxBuffer,
-                });
+                try {
+                    console.log(chalk.yellow('⚠️  origin/main not found, trying main branch...'));
+                    diff = execSync('git diff main', {
+                        encoding: 'utf-8',
+                        maxBuffer,
+                    });
+                }
+                catch {
+                    // Fallback to origin/master
+                    try {
+                        console.log(chalk.yellow('⚠️  main not found, trying origin/master branch...'));
+                        diff = execSync('git diff origin/master', {
+                            encoding: 'utf-8',
+                            maxBuffer,
+                        });
+                    }
+                    catch {
+                        // Final fallback to master
+                        console.log(chalk.yellow('⚠️  origin/master not found, trying master branch...'));
+                        diff = execSync('git diff master', {
+                            encoding: 'utf-8',
+                            maxBuffer,
+                        });
+                    }
+                }
             }
         }
         else if (command === 'staged') {
