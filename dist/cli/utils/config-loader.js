@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { validateConfigOrThrow, validateConfig } from '../../utils/config-validator.js';
+import { ConfigurationError } from '../../utils/errors.js';
 const CONFIG_FILE = '.pragent.config.json';
 /**
  * Find config file in current directory or parent directories
@@ -25,7 +27,7 @@ export function findConfigFile() {
 /**
  * Load user configuration from file
  */
-export async function loadUserConfig(verbose = false) {
+export async function loadUserConfig(verbose = false, validate = true) {
     const configPath = findConfigFile();
     if (!configPath) {
         if (verbose) {
@@ -40,13 +42,34 @@ export async function loadUserConfig(verbose = false) {
         if (verbose) {
             console.log(chalk.green(`✅ Loaded configuration from: ${path.relative(process.cwd(), configPath)}`));
         }
+        // Validate configuration if requested
+        if (validate) {
+            try {
+                return validateConfigOrThrow(config, configPath);
+            }
+            catch (error) {
+                if (error instanceof ConfigurationError) {
+                    if (verbose) {
+                        console.error(chalk.red(`\n❌ ${error.message}`));
+                    }
+                    throw error;
+                }
+                throw error;
+            }
+        }
         return config;
     }
     catch (error) {
-        if (verbose) {
-            console.error(chalk.red(`❌ Error loading configuration: ${error}`));
+        if (error instanceof ConfigurationError) {
+            throw error;
         }
-        return {};
+        if (error instanceof SyntaxError) {
+            throw new ConfigurationError(`Invalid JSON in configuration file: ${error.message}\n\nRun: pr-agent config --init to recreate configuration.`, 'config');
+        }
+        if (verbose) {
+            console.error(chalk.red(`❌ Error loading configuration: ${error instanceof Error ? error.message : String(error)}`));
+        }
+        throw new ConfigurationError(`Failed to load configuration: ${error instanceof Error ? error.message : String(error)}\n\nRun: pr-agent config --init to fix configuration.`, 'config');
     }
 }
 /**
@@ -61,17 +84,33 @@ export async function checkConfiguration() {
         return true; // Don't block execution, just warn
     }
     try {
-        const config = await loadUserConfig(false);
+        const config = await loadUserConfig(false, true); // Validate config
         // Basic validation
-        if (!config.ai?.provider && !process.env.ANTHROPIC_API_KEY) {
+        if (!config.ai?.provider && !process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.GOOGLE_API_KEY) {
             console.log(chalk.yellow('\n⚠️  No AI provider configured'));
             console.log(chalk.gray('   Run: pr-agent config --init\n'));
             return true; // Don't block execution
         }
+        // Validate branch configuration if present
+        if (config.git?.defaultBranch) {
+            const validation = validateConfig(config);
+            if (!validation.success) {
+                const branchErrors = validation.errors.filter((e) => e.includes('defaultBranch'));
+                if (branchErrors.length > 0) {
+                    console.log(chalk.yellow('\n⚠️  Invalid branch configuration:'));
+                    branchErrors.forEach((err) => console.log(chalk.gray(`   • ${err}`)));
+                    console.log(chalk.gray('   Run: pr-agent config --set git.defaultBranch=<branch-name>\n'));
+                }
+            }
+        }
         return true;
     }
     catch (error) {
-        console.error(chalk.red(`❌ Invalid configuration: ${error}`));
+        if (error instanceof ConfigurationError) {
+            console.error(chalk.red(`\n❌ ${error.message}`));
+            return false;
+        }
+        console.error(chalk.red(`❌ Invalid configuration: ${error instanceof Error ? error.message : String(error)}`));
         return false;
     }
 }
@@ -80,8 +119,11 @@ export async function checkConfiguration() {
  */
 export function getApiKey(provider, config) {
     // Check config first
-    if (config?.apiKeys && config.apiKeys[provider]) {
-        return config.apiKeys[provider];
+    if (config?.apiKeys) {
+        const key = config.apiKeys[provider];
+        if (key && key.trim().length > 0) {
+            return key;
+        }
     }
     // Fall back to environment variables
     const envVarMap = {
@@ -91,7 +133,10 @@ export function getApiKey(provider, config) {
     };
     const envVar = envVarMap[provider.toLowerCase()];
     if (envVar) {
-        return process.env[envVar];
+        const envKey = process.env[envVar];
+        if (envKey && envKey.trim().length > 0) {
+            return envKey;
+        }
     }
     return undefined;
 }

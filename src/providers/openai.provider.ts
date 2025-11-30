@@ -27,7 +27,7 @@ export class OpenAIProvider implements ILLMProvider {
     }
 
     return new ChatOpenAI({
-      openAIApiKey: this.apiKey,
+      apiKey: this.apiKey,
       modelName: config.model || this.getDefaultModel(),
       temperature: config.temperature ?? 0.2,
       maxTokens: config.maxTokens ?? 4000,

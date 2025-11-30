@@ -1,0 +1,105 @@
+/**
+ * Configuration validation using Zod
+ */
+import { z } from 'zod';
+import { ConfigurationError } from './errors.js';
+/**
+ * Zod schema for validating UserConfig
+ */
+export const UserConfigSchema = z.object({
+    apiKeys: z
+        .object({
+        anthropic: z.string().optional(),
+        openai: z.string().optional(),
+        google: z.string().optional(),
+    })
+        .optional(),
+    ai: z
+        .object({
+        provider: z.enum(['anthropic', 'openai', 'google']).optional(),
+        model: z.string().optional(),
+        temperature: z.number().min(0).max(2).optional(),
+        maxTokens: z.number().positive().int().optional(),
+    })
+        .optional(),
+    analysis: z
+        .object({
+        defaultMode: z.enum(['full', 'summary', 'risks', 'complexity']).optional(),
+        maxCost: z.number().nonnegative().optional(),
+        autoDetectAgent: z.boolean().optional(),
+        agentThreshold: z.number().nonnegative().int().optional(),
+    })
+        .optional(),
+    git: z
+        .object({
+        defaultBranch: z
+            .string()
+            .min(1)
+            .refine((val) => {
+            // Allow origin/branch, branch, or just branch name
+            // Reject empty strings and invalid patterns
+            if (!val || val.trim().length === 0)
+                return false;
+            // Basic validation: should not contain dangerous characters
+            if (/[<>"|\\\x00-\x1f]/.test(val))
+                return false;
+            return true;
+        }, {
+            message: 'defaultBranch must be a valid branch name (e.g., "origin/main", "main", "master")',
+        })
+            .optional(),
+        includeUntracked: z.boolean().optional(),
+        excludePatterns: z.array(z.string()).optional(),
+    })
+        .optional(),
+    output: z
+        .object({
+        verbose: z.boolean().optional(),
+        showStrategy: z.boolean().optional(),
+        showRecommendations: z.boolean().optional(),
+    })
+        .optional(),
+});
+/**
+ * Validate configuration object
+ */
+export function validateConfig(config) {
+    try {
+        const result = UserConfigSchema.safeParse(config);
+        if (result.success) {
+            return {
+                success: true,
+                errors: [],
+                sanitizedConfig: result.data,
+            };
+        }
+        else {
+            const errors = result.error.issues.map((err) => {
+                const path = err.path.join('.');
+                return `${path}: ${err.message}`;
+            });
+            return {
+                success: false,
+                errors,
+            };
+        }
+    }
+    catch (error) {
+        return {
+            success: false,
+            errors: [`Validation error: ${error instanceof Error ? error.message : String(error)}`],
+        };
+    }
+}
+/**
+ * Validate and throw if invalid
+ */
+export function validateConfigOrThrow(config, configPath) {
+    const validation = validateConfig(config);
+    if (!validation.success) {
+        const errorMessage = `Invalid configuration${configPath ? ` in ${configPath}` : ''}:\n${validation.errors.map((e) => `  • ${e}`).join('\n')}\n\nRun: pr-agent config --init to fix configuration.`;
+        throw new ConfigurationError(errorMessage, 'config');
+    }
+    return validation.sanitizedConfig;
+}
+//# sourceMappingURL=config-validator.js.map

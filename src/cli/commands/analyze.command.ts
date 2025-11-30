@@ -5,6 +5,8 @@ import ora from 'ora';
 import { PRAnalyzerAgent } from '../../agents/pr-analyzer-agent.js';
 import { loadUserConfig, getApiKey } from '../utils/config-loader.js';
 import { archDocsExists } from '../../utils/arch-docs-parser.js';
+import { resolveDefaultBranch } from '../../utils/branch-resolver.js';
+import { ConfigurationError, GitHubAPIError, GitError } from '../../utils/errors.js';
 
 interface AnalyzeOptions {
   diff?: string;
@@ -73,54 +75,50 @@ async function getUntrackedFiles(): Promise<string[]> {
 /**
  * Get git diff with optional command
  */
-async function getGitDiff(command?: string): Promise<string> {
+async function getGitDiff(command?: string, defaultBranch?: string): Promise<string> {
   try {
     let diff: string = '';
     const maxBuffer = 200 * 1024 * 1024; // 200MB
 
-    if (!command || command === 'origin/main') {
+    if (!command || command === 'default') {
+      // Use resolved default branch
+      const branch = defaultBranch || 'origin/main';
       try {
-        diff = execSync('git diff origin/main', {
+        diff = execSync(`git diff ${branch}`, {
           encoding: 'utf-8',
           maxBuffer,
         });
-      } catch {
-        // Fallback to main branch
-        try {
-          console.log(chalk.yellow('⚠️  origin/main not found, trying main branch...'));
-          diff = execSync('git diff main', {
-            encoding: 'utf-8',
-            maxBuffer,
-          });
-        } catch {
-          // Fallback to origin/master
-          try {
-            console.log(chalk.yellow('⚠️  main not found, trying origin/master branch...'));
-            diff = execSync('git diff origin/master', {
-              encoding: 'utf-8',
-              maxBuffer,
-            });
-          } catch {
-            // Final fallback to master
-            console.log(chalk.yellow('⚠️  origin/master not found, trying master branch...'));
-            diff = execSync('git diff master', {
-              encoding: 'utf-8',
-              maxBuffer,
-            });
-          }
-        }
+      } catch (error: any) {
+        throw new GitError(
+          `Failed to get diff from branch "${branch}". The branch may not exist locally. Run: git fetch origin && git checkout ${branch}`,
+          `git diff ${branch}`,
+        );
       }
     } else if (command === 'staged') {
-      diff = execSync('git diff --staged', {
-        encoding: 'utf-8',
-        maxBuffer,
-      });
+      try {
+        diff = execSync('git diff --staged', {
+          encoding: 'utf-8',
+          maxBuffer,
+        });
+      } catch (error: any) {
+        throw new GitError(
+          'Failed to get staged changes. Make sure you have staged files with: git add <files>',
+          'git diff --staged',
+        );
+      }
     } else {
       // Custom branch or reference
-      diff = execSync(`git diff ${command}`, {
-        encoding: 'utf-8',
-        maxBuffer,
-      });
+      try {
+        diff = execSync(`git diff ${command}`, {
+          encoding: 'utf-8',
+          maxBuffer,
+        });
+      } catch (error: any) {
+        throw new GitError(
+          `Failed to get diff from "${command}". The branch or reference may not exist.`,
+          `git diff ${command}`,
+        );
+      }
     }
 
     // Normalize diff (remove trailing whitespace but preserve structure)
@@ -251,10 +249,24 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
   const spinner = ora('Initializing PR analysis...').start();
 
   try {
-    // Load configuration
-    const config = await loadUserConfig(false);
+    // Load and validate configuration
+    let config;
+    try {
+      config = await loadUserConfig(false, true); // Validate config
+    } catch (error) {
+      spinner.fail('Configuration error');
+      if (error instanceof ConfigurationError) {
+        console.error(chalk.red(`\n❌ ${error.message}`));
+        process.exit(1);
+      }
+      throw error;
+    }
     
     // Get provider and API key from config or environment
+    if (options.verbose) {
+      console.log(chalk.gray(`   Debug: options.provider: ${options.provider || 'undefined'}`));
+      console.log(chalk.gray(`   Debug: config.ai?.provider: ${config.ai?.provider || 'undefined'}`));
+    }
     const provider = (options.provider || config.ai?.provider || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
     const apiKey = getApiKey(provider, config);
     
@@ -270,6 +282,41 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
     }
     
     spinner.succeed(`Using AI provider: ${provider}`);
+
+    // Resolve default branch if needed
+    let defaultBranch: string | undefined;
+    if (!options.diff && !options.file && !options.staged && !options.branch) {
+      spinner.text = 'Resolving default branch...';
+      try {
+        const branchResult = await resolveDefaultBranch({
+          configBranch: config.git?.defaultBranch,
+          githubToken: process.env.GITHUB_TOKEN,
+          fallbackToGit: true,
+        });
+        
+        defaultBranch = branchResult.branch;
+        
+        if (branchResult.warning && options.verbose) {
+          console.log(chalk.yellow(`\n⚠️  ${branchResult.warning}`));
+        }
+        
+        if (options.verbose) {
+          console.log(chalk.gray(`   Using branch: ${defaultBranch} (source: ${branchResult.source})`));
+        }
+      } catch (error) {
+        if (error instanceof GitHubAPIError || error instanceof ConfigurationError) {
+          spinner.fail('Branch resolution failed');
+          console.error(chalk.red(`\n❌ ${error.message}`));
+          if (error instanceof GitHubAPIError) {
+            console.error(chalk.gray('\n💡  You can override the branch with:'));
+            console.error(chalk.gray('   pr-agent analyze --branch <branch-name>'));
+            console.error(chalk.gray('   Or set git.defaultBranch in config: pr-agent config --set git.defaultBranch=<branch>'));
+          }
+          process.exit(1);
+        }
+        throw error;
+      }
+    }
 
     // Determine analysis mode
     const mode: AnalysisMode = {
@@ -289,16 +336,30 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
 
     // Get the diff
     let diff: string;
-    if (options.diff) {
-      diff = options.diff;
-    } else if (options.file) {
-      diff = fs.readFileSync(options.file, 'utf-8');
-    } else if (options.staged) {
-      diff = await getGitDiff('staged');
-    } else if (options.branch) {
-      diff = await getGitDiff(options.branch);
-    } else {
-      diff = await getGitDiff();
+    try {
+      if (options.diff) {
+        diff = options.diff;
+      } else if (options.file) {
+        diff = fs.readFileSync(options.file, 'utf-8');
+      } else if (options.staged) {
+        diff = await getGitDiff('staged');
+      } else if (options.branch) {
+        diff = await getGitDiff(options.branch);
+      } else {
+        diff = await getGitDiff('default', defaultBranch);
+      }
+    } catch (error) {
+      spinner.fail('Failed to get diff');
+      if (error instanceof GitError) {
+        console.error(chalk.red(`\n❌ ${error.message}`));
+        console.error(chalk.gray('\n💡  Troubleshooting:'));
+        console.error(chalk.gray('   • Make sure you are in a git repository'));
+        console.error(chalk.gray('   • Check that the branch exists: git branch -a'));
+        console.error(chalk.gray('   • Fetch remote branches: git fetch origin'));
+        console.error(chalk.gray('   • Use --branch flag to specify a different branch'));
+        process.exit(1);
+      }
+      throw error;
     }
 
     if (!diff) {
@@ -351,15 +412,43 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
     displayAgentResults(result, mode, options.verbose || false);
   } catch (error: any) {
     spinner.fail('Analysis failed');
-    if (error.message && error.message.includes('rate-limits')) {
+    
+    // Handle specific error types with user-friendly messages
+    if (error instanceof ConfigurationError) {
+      console.error(chalk.red(`\n❌ Configuration Error: ${error.message}`));
+      console.error(chalk.gray('\n💡  Run: pr-agent config --init to fix configuration'));
+      process.exit(1);
+    } else if (error instanceof GitHubAPIError) {
+      console.error(chalk.red(`\n❌ GitHub API Error: ${error.message}`));
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        console.error(chalk.gray('\n💡  Check your GITHUB_TOKEN environment variable'));
+      }
+      process.exit(1);
+    } else if (error instanceof GitError) {
+      console.error(chalk.red(`\n❌ Git Error: ${error.message}`));
+      process.exit(1);
+    } else if (error.message && error.message.includes('rate-limits')) {
       console.error(chalk.red.bold('\n❌  Rate limit error: Your diff is too large for the API.'));
       console.error(
         chalk.yellow('\n💡  Try reducing the diff size or adjusting maxTokens in config'),
       );
+      process.exit(1);
     } else {
-      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : error);
+      // Generic error - sanitize output to avoid leaking sensitive info
+      const errorMessage = error.message || String(error);
+      // Don't log full stack traces or potential secrets
+      const sanitizedMessage = errorMessage
+        .replace(/sk-[a-zA-Z0-9_-]+/g, 'sk-***')
+        .replace(/ghp_[a-zA-Z0-9]+/g, 'ghp_***')
+        .substring(0, 500); // Limit length
+      
+      console.error(chalk.red(`\n❌  Error: ${sanitizedMessage}`));
+      if (options.verbose && error.stack) {
+        console.error(chalk.gray('\nStack trace:'));
+        console.error(chalk.gray(error.stack.substring(0, 1000)));
+      }
+      process.exit(1);
     }
-    process.exit(1);
   }
 }
 

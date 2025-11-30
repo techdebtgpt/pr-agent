@@ -26,7 +26,7 @@ PR Agent analyzes your code changes and provides:
 
 ```bash
 # Install
-npm install -g pr-agent
+npm install -g @techdebtgpt/pr-agent
 
 # Setup
 pr-agent config --init
@@ -80,13 +80,13 @@ Before using PR Agent, you'll need:
 Install PR Agent globally using npm:
 
 ```bash
-npm install -g pr-agent
+npm install -g @techdebtgpt/pr-agent
 ```
 
 Or use it directly with npx:
 
 ```bash
-npx pr-agent analyze
+npx @techdebtgpt/pr-agent analyze
 ```
 
 ### Verify Installation
@@ -277,6 +277,35 @@ export GOOGLE_API_KEY="..."
 ```
 
 Add to your `.bashrc`, `.zshrc`, or `.env` file for persistence.
+
+#### Default Branch Configuration
+
+PR Agent automatically detects the default branch for your repository using the following priority:
+
+1. **Config file** (`git.defaultBranch`) - If set in `.pragent.config.json`, this takes highest priority
+2. **GitHub API** - If `GITHUB_TOKEN` is available, fetches the default branch from GitHub
+3. **Git commands** - Falls back to detecting from local git repository
+4. **Fallback** - Defaults to `origin/main` if nothing else works
+
+**Examples:**
+
+```bash
+# Set default branch in config
+pr-agent config --set git.defaultBranch=origin/develop
+
+# For repositories using 'master' as default
+pr-agent config --set git.defaultBranch=origin/master
+
+# Override for a single analysis
+pr-agent analyze --branch origin/feature-branch
+```
+
+**Troubleshooting Branch Issues:**
+
+- **Branch not found**: Run `git fetch origin` to update remote branch references
+- **Wrong branch detected**: Set `git.defaultBranch` in config or use `--branch` flag
+- **GitHub API errors**: Ensure `GITHUB_TOKEN` is valid, or rely on git fallback
+- **Custom default branch**: Configure it explicitly: `pr-agent config --set git.defaultBranch=origin/your-branch`
 
 ## Architecture Documentation Integration
 
@@ -521,7 +550,8 @@ cd pr-agent
 ### 2. Install Dependencies
 
 ```bash
-npm install
+# Install dependencies (use --legacy-peer-deps to handle langchain peer dependency conflicts)
+npm install --legacy-peer-deps
 ```
 
 ### 3. Build the Project
@@ -542,15 +572,21 @@ npm run build:action
 #### Test CLI
 
 ```bash
-# Run directly with tsx (development)
-npm run dev
+# Option 1: Link locally to use 'pr-agent' command
+npm link
+pr-agent config --init
+pr-agent analyze --staged
 
-# Build and test
-npm run build
-node dist/cli/index.js analyze --help
+# Option 2: Use npm script
+npm run cli config --init
+npm run cli analyze --staged
 
-# Test analyze command
+# Option 3: Run directly with node
+node dist/cli/index.js config --init
 node dist/cli/index.js analyze --staged
+
+# Option 4: Development mode (no build needed)
+npm run dev
 ```
 
 #### Test GitHub Action
@@ -651,10 +687,10 @@ For large or complex PRs, PR Agent uses an intelligent agent system that:
 
 ```bash
 # If pr-agent command not found after npm install -g
-npm install -g pr-agent
+npm install -g @techdebtgpt/pr-agent
 
 # Or use npx
-npx pr-agent analyze
+npx @techdebtgpt/pr-agent analyze
 ```
 
 #### API Key Not Recognized
@@ -768,6 +804,7 @@ Best for: Overall quality, architecture understanding, and complex reasoning
 
 ### OpenAI GPT
 
+- **gpt-5.1** - Latest GPT-5.1 model (newest)
 - **gpt-4-turbo-preview** - Latest GPT-4 (recommended)
 - **gpt-4** - Stable and reliable
 - **gpt-3.5-turbo** - Fast and cost-effective
@@ -860,7 +897,7 @@ Add to your CI pipeline:
 # .github/workflows/pr-check.yml
 - name: PR Quality Check
   run: |
-    npm install -g pr-agent
+    npm install -g @techdebtgpt/pr-agent
     pr-agent analyze --full
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
