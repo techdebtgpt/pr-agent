@@ -34,7 +34,7 @@ export declare function findConfigFile(): string | null;
 /**
  * Load user configuration from file
  */
-export declare function loadUserConfig(verbose?: boolean): Promise<UserConfig>;
+export declare function loadUserConfig(verbose?: boolean, validate?: boolean): Promise<UserConfig>;
 /**
  * Check if configuration exists and is valid
  */

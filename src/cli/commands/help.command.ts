@@ -42,6 +42,14 @@ export function displayHelp(): void {
   console.log('      --branch <name>        Analyze against specific branch');
   console.log('      --file <path>          Read diff from file');
   console.log('      --diff <text>          Provide diff directly\n');
+  
+  console.log(chalk.dim('    Default Branch Detection:'));
+  console.log('      The default branch is determined in this order:');
+  console.log('      1. Config file (git.defaultBranch)');
+  console.log('      2. GitHub API (if GITHUB_TOKEN is set)');
+  console.log('      3. Git commands (local detection)');
+  console.log('      4. Fallback to origin/main');
+  console.log('      Use --branch to override for a single analysis\n');
 
   console.log(chalk.dim('    Advanced Options:'));
   console.log('      --provider <provider>  AI provider: anthropic|openai|google');
@@ -129,6 +137,7 @@ export function displayHelp(): void {
   console.log('    • claude-3-5-sonnet-20241022');
   console.log('    • claude-3-opus-20240229\n');
   console.log(chalk.green('  OpenAI GPT'));
+  console.log('    • gpt-5.1 (latest)');
   console.log('    • gpt-4-turbo-preview');
   console.log('    • gpt-4');
   console.log('    • gpt-3.5-turbo\n');

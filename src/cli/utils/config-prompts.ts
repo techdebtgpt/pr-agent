@@ -70,6 +70,7 @@ export async function promptFullConfig(
     defaultModel = 'claude-sonnet-4-5-20250929';
   } else if (provider === 'openai') {
     modelChoices = [
+      { name: 'GPT-5.1 (Latest)', value: 'gpt-5.1' },
       { name: 'GPT-4 Turbo (Recommended)', value: 'gpt-4-turbo-preview' },
       { name: 'GPT-4', value: 'gpt-4' },
       { name: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
