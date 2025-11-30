@@ -154,5 +154,17 @@ dist/*
 !dist/index.js
 !dist/index.js.map
 
+# Allow necessary directories for agent imports (needed when ncc doesn't fully bundle)
+!dist/utils/
+!dist/utils/**
+!dist/agents/
+!dist/agents/**
+!dist/tools/
+!dist/tools/**
+!dist/providers/
+!dist/providers/**
+!dist/types/
+!dist/types/**
+
 # ArchDoc configuration (contains API keys)
 .archdoc.config.json
