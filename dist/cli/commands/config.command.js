@@ -108,6 +108,7 @@ async function initializeConfig() {
     }
     else if (provider === 'openai') {
         modelChoices = [
+            { name: 'GPT-5.1 (Latest)', value: 'gpt-5.1' },
             { name: 'GPT-4 Turbo', value: 'gpt-4-turbo-preview' },
             { name: 'GPT-4', value: 'gpt-4' },
             { name: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
