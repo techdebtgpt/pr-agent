@@ -45,6 +45,8 @@ program
   .option('--arch-docs', 'Use architecture documentation from .arch-docs folder (auto-detected by default)')
   .option('--max-cost <dollars>', 'Maximum cost in dollars', '5.0')
   .option('--verbose', 'Enable verbose output', false)
+  .option('--no-cache', 'Disable result caching')
+  .option('--mock', 'Run in mock mode (no API calls)')
   .action(analyzePR);
 
 // Config command

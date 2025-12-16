@@ -24,6 +24,8 @@ interface AnalyzeOptions {
   verbose?: boolean;
   maxCost?: number;
   archDocs?: boolean;
+  noCache?: boolean;
+  mock?: boolean;
 }
 
 interface AnalysisMode {
@@ -261,16 +263,17 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       }
       throw error;
     }
-    
+
     // Get provider and API key from config or environment
     if (options.verbose) {
       console.log(chalk.gray(`   Debug: options.provider: ${options.provider || 'undefined'}`));
       console.log(chalk.gray(`   Debug: config.ai?.provider: ${config.ai?.provider || 'undefined'}`));
     }
     const provider = (options.provider || config.ai?.provider || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
-    const apiKey = getApiKey(provider, config);
-    
-    if (!apiKey) {
+    const apiKey = getApiKey(provider, config) || (options.mock ? 'mock-key' : undefined);
+
+    // Skip API key check if mock mode is enabled
+    if (!apiKey && !options.mock) {
       spinner.fail('No API key found');
       console.error(chalk.yellow('💡  Please set it in one of these ways:'));
       console.error(chalk.gray('   1. Run: pr-agent config --init'));
@@ -280,8 +283,12 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       console.error(chalk.gray('      - Google (Gemini): export GOOGLE_API_KEY="your-api-key"'));
       process.exit(1);
     }
-    
-    spinner.succeed(`Using AI provider: ${provider}`);
+
+    if (options.mock) {
+      spinner.info('Running in MOCK mode (no API calls)');
+    } else {
+      spinner.succeed(`Using AI provider: ${provider}`);
+    }
 
     // Resolve default branch if needed
     let defaultBranch: string | undefined;
@@ -293,13 +300,13 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
           githubToken: process.env.GITHUB_TOKEN,
           fallbackToGit: true,
         });
-        
+
         defaultBranch = branchResult.branch;
-        
+
         if (branchResult.warning && options.verbose) {
           console.log(chalk.yellow(`\n⚠️  ${branchResult.warning}`));
         }
-        
+
         if (options.verbose) {
           console.log(chalk.gray(`   Using branch: ${defaultBranch} (source: ${branchResult.source})`));
         }
@@ -353,7 +360,7 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       if (error instanceof GitError) {
         console.error(chalk.red(`\n❌ ${error.message}`));
         console.error(chalk.gray('\n💡  Troubleshooting:'));
-        console.error(chalk.gray('   • Make sure you are in a git repository'));
+        console.error(chalk.gray('   • Make sure you have a git repository with changes to analyze.'));
         console.error(chalk.gray('   • Check that the branch exists: git branch -a'));
         console.error(chalk.gray('   • Fetch remote branches: git fetch origin'));
         console.error(chalk.gray('   • Use --branch flag to specify a different branch'));
@@ -390,7 +397,7 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
     // Check for arch-docs
     const useArchDocs = options.archDocs !== false; // Default to true if not specified
     const hasArchDocs = archDocsExists();
-    
+
     if (useArchDocs && hasArchDocs) {
       console.log(chalk.cyan('📚 Architecture documentation detected - including in analysis\n'));
     } else if (options.archDocs && !hasArchDocs) {
@@ -403,16 +410,20 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       apiKey,
       model,
     });
+
+    // Pass noCache and mock options to agent
     const result = await agent.analyze(diff, title, mode, {
       useArchDocs: useArchDocs && hasArchDocs,
       repoPath: process.cwd(),
+      noCache: options.noCache,
+      mock: options.mock
     });
 
     // Display results
     displayAgentResults(result, mode, options.verbose || false);
   } catch (error: any) {
     spinner.fail('Analysis failed');
-    
+
     // Handle specific error types with user-friendly messages
     if (error instanceof ConfigurationError) {
       console.error(chalk.red(`\n❌ Configuration Error: ${error.message}`));
@@ -441,7 +452,7 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
         .replace(/sk-[a-zA-Z0-9_-]+/g, 'sk-***')
         .replace(/ghp_[a-zA-Z0-9]+/g, 'ghp_***')
         .substring(0, 500); // Limit length
-      
+
       console.error(chalk.red(`\n❌  Error: ${sanitizedMessage}`));
       if (options.verbose && error.stack) {
         console.error(chalk.gray('\nStack trace:'));
@@ -456,8 +467,14 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
  * Display agent analysis results
  */
 function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean): void {
+  // Existing display logic...
   console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.green.bold('\n✨  Agent Analysis Complete!\n'));
+
+  if (result.executionTime === 0 && result.provider !== 'mock') {
+    console.log(chalk.green.bold('\n✨  Agent Analysis Complete (⚡ Cached)!\n'));
+  } else {
+    console.log(chalk.green.bold('\n✨  Agent Analysis Complete!\n'));
+  }
 
   // Clean summary - remove markdown headers and duplicates
   let cleanSummary = result.summary;
@@ -579,23 +596,23 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
   if (result.archDocsImpact?.used) {
     console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log(chalk.blue.bold('\n📚 Architecture Documentation Impact\n'));
-    
+
     console.log(chalk.white(`Documents analyzed: ${result.archDocsImpact.docsAvailable}`));
     console.log(chalk.white(`Relevant sections used: ${result.archDocsImpact.sectionsUsed}\n`));
-    
+
     if (result.archDocsImpact.influencedStages.length > 0) {
       console.log(chalk.cyan('Stages influenced by arch-docs:'));
       result.archDocsImpact.influencedStages.forEach((stage: string) => {
         const stageEmoji = stage === 'file-analysis' ? '🔍' :
-                          stage === 'risk-detection' ? '⚠️' :
-                          stage === 'complexity-calculation' ? '📊' :
-                          stage === 'summary-generation' ? '📝' :
-                          stage === 'refinement' ? '🔄' : '✨';
+          stage === 'risk-detection' ? '⚠️' :
+            stage === 'complexity-calculation' ? '📊' :
+              stage === 'summary-generation' ? '📝' :
+                stage === 'refinement' ? '🔄' : '✨';
         console.log(chalk.white(`  ${stageEmoji} ${stage}`));
       });
       console.log('');
     }
-    
+
     if (result.archDocsImpact.keyInsights.length > 0) {
       console.log(chalk.cyan('Key insights from arch-docs integration:\n'));
       result.archDocsImpact.keyInsights.forEach((insight: string, i: number) => {
@@ -611,5 +628,3 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
 
   console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
 }
-
-

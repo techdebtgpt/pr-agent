@@ -331,8 +331,8 @@ ${archDocsContext ? `CRITICAL INSTRUCTIONS:
 - Identify specific guidelines that apply to each file
 - Mention which parts of the architecture are affected
 - Compare changes against documented standards
-
-` : ''}
+- BE CONCISE. No fluff. Direct facts only.
+` : 'CRITICAL INSTRUCTIONS: BE CONCISE. No conversational filler. Direct facts only.'}
 
 Respond with a JSON object mapping file paths to analysis objects:
 {
@@ -493,6 +493,8 @@ ${securityContext ? `- archDocsSource: REQUIRED - Which documentation file from 
 - archDocsExcerpt: REQUIRED - Direct quote from the repository documentation that this violates
 - reason: REQUIRED - Detailed explanation of why this is a risk based on the specific guideline quoted above
 ` : ''}
+
+CRITICAL: Report only DEFINITE, HIGH-IMPACT risks. Do not report theoretical risks using words like "may", "could", "might", "possibly". If a risk is not actionable and clear, do NOT include it. Be extremely direct.
 
 Format:
 ${securityContext ? `[
@@ -718,9 +720,11 @@ ${fileList}
 
 ${currentRisks.length > 0 ? `\nRisks detected:\n${currentRisks.map(r => `- ${r}`).join('\n')}` : ''}
 
+providers.
+
 ${patternsContext ? 'Consider the design patterns and architecture from the repository documentation when analyzing the changes.\n' : ''}
 
-Provide a detailed, well-structured summary (3-5 paragraphs) that would help a reviewer understand the scope and purpose of this PR.`;
+Provide a CONCISE, EXECUTIVE summary. Max 3 bullet points. No conversational filler (e.g., "This PR..."). State facts directly.`;
         try {
             const response = await this.model.invoke(summaryPrompt);
             const detailedSummary = response.content;
@@ -816,6 +820,8 @@ Consider:
 ${archDocsRefinementContext ? '7. Alignment with repository standards and KPIs from arch-docs\n' : ''}
 
 ${archDocsRefinementContext ? 'Use the repository guidelines and standards above to ensure recommendations align with established practices.\n' : ''}
+
+CRITICAL: Recommendations must be IMPERATIVE commands (e.g., "Add index...", "Fix typo..."). Do NOT use "Consider", "Suggest", "It might be good". Be commanding and direct.
 
 Provide a JSON array of 3-5 specific, actionable recommendations:
 ["recommendation 1", "recommendation 2", ...]`;

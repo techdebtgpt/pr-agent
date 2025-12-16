@@ -146,6 +146,7 @@ vite.config.ts.timestamp-*
 .idea
 
 .pragent.config.json
+.pr-agent/
 
 # Build output - ignore everything in dist/
 dist/*

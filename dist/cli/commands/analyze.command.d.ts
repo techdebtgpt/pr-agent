@@ -14,6 +14,8 @@ interface AnalyzeOptions {
     verbose?: boolean;
     maxCost?: number;
     archDocs?: boolean;
+    noCache?: boolean;
+    mock?: boolean;
 }
 /**
  * Analyze command - analyze PR diffs with AI

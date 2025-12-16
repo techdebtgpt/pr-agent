@@ -9,6 +9,7 @@ import { parseDiff } from '../tools/pr-analysis-tools.js';
 import { ProviderFactory, ProviderOptions } from '../providers/index.js';
 import { parseAllArchDocs, archDocsExists } from '../utils/arch-docs-parser.js';
 import { buildArchDocsContext } from '../utils/arch-docs-rag.js';
+import { CacheManager } from '../utils/cache-manager.js';
 
 /**
  * PR Analysis Agent using LangChain and LangGraph
@@ -22,7 +23,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       temperature: options.temperature ?? 0.2,
       maxTokens: options.maxTokens ?? 4000,
     });
-    
+
     super(model);
   }
 
@@ -51,8 +52,52 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     diff: string,
     title?: string,
     mode?: AnalysisMode,
-    options?: { useArchDocs?: boolean; repoPath?: string }
+    options?: { useArchDocs?: boolean; repoPath?: string; noCache?: boolean; mock?: boolean }
   ): Promise<AgentResult> {
+    if (options?.mock) {
+      return {
+        summary: "MOCK ANALYSIS: This is a simulated analysis result.",
+        fileAnalyses: new Map([
+          ["src/mock/file.ts", {
+            path: "src/mock/file.ts",
+            changes: { additions: 10, deletions: 5 },
+            summary: "Mock file analysis",
+            risks: [],
+            complexity: 1,
+            recommendations: []
+          }]
+        ]),
+        overallComplexity: 3,
+        overallRisks: [{ description: "Mock Risk 1", archDocsReference: { source: "mock.md", excerpt: "mock rule", reason: "Simulated risk" } }],
+        recommendations: ["Mock recommendation 1", "Mock recommendation 2"],
+        insights: ["Mock insight"],
+        reasoning: ["Mock execution"],
+        provider: "mock",
+        model: "mock-model",
+        totalTokensUsed: 0,
+        executionTime: 0,
+        mode: mode || { summary: true, risks: true, complexity: true }
+      };
+    }
+
+    // Check cache first
+    const cacheManager = new CacheManager(options?.repoPath);
+    const cacheKey = cacheManager.generateKey({
+      type: 'analyze',
+      diff,
+      title,
+      mode,
+      model: (this.model as any).modelName || 'unknown',
+      useArchDocs: options?.useArchDocs
+    });
+
+    if (!options?.noCache) {
+      const cached = cacheManager.get<AgentResult>(cacheKey);
+      if (cached) {
+        return { ...cached, executionTime: 0 }; // Indicate cached result
+      }
+    }
+
     // Parse diff into files
     const files = parseDiff(diff);
 
@@ -79,13 +124,35 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       skipSelfRefinement: files.length < 5 || diff.length < 10000, // Skip for small PRs
     });
 
+    // Cache the result
+    if (!options?.noCache) {
+      cacheManager.set(cacheKey, result);
+    }
+
     return result;
   }
 
   /**
    * Quick analysis without refinement
    */
-  async quickAnalyze(diff: string, title?: string, options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResult> {
+  async quickAnalyze(diff: string, title?: string, options?: { useArchDocs?: boolean; repoPath?: string; noCache?: boolean }): Promise<AgentResult> {
+    // Check cache first
+    const cacheManager = new CacheManager(options?.repoPath);
+    const cacheKey = cacheManager.generateKey({
+      type: 'quickAnalyze',
+      diff,
+      title,
+      model: (this.model as any).modelName || 'unknown',
+      useArchDocs: options?.useArchDocs
+    });
+
+    if (!options?.noCache) {
+      const cached = cacheManager.get<AgentResult>(cacheKey);
+      if (cached) {
+        return { ...cached, executionTime: 0 };
+      }
+    }
+
     const files = parseDiff(diff);
 
     // Build arch-docs context if enabled
@@ -105,15 +172,39 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       archDocs: archDocsContext,
     };
 
-    return this.execute(context, {
+    const result = await this.execute(context, {
       skipSelfRefinement: true,
     });
+
+    // Cache the result
+    if (!options?.noCache) {
+      cacheManager.set(cacheKey, result);
+    }
+
+    return result;
   }
 
   /**
    * Analyze specific files only
    */
-  async analyzeFiles(diff: string, filePaths: string[], options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResult> {
+  async analyzeFiles(diff: string, filePaths: string[], options?: { useArchDocs?: boolean; repoPath?: string; noCache?: boolean }): Promise<AgentResult> {
+    // Check cache first
+    const cacheManager = new CacheManager(options?.repoPath);
+    const cacheKey = cacheManager.generateKey({
+      type: 'analyzeFiles',
+      diff,
+      filePaths,
+      model: (this.model as any).modelName || 'unknown',
+      useArchDocs: options?.useArchDocs
+    });
+
+    if (!options?.noCache) {
+      const cached = cacheManager.get<AgentResult>(cacheKey);
+      if (cached) {
+        return { ...cached, executionTime: 0 };
+      }
+    }
+
     const allFiles = parseDiff(diff);
     const files = allFiles.filter(f => filePaths.includes(f.path));
 
@@ -133,9 +224,16 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       archDocs: archDocsContext,
     };
 
-    return this.execute(context, {
+    const result = await this.execute(context, {
       skipSelfRefinement: true,
     });
+
+    // Cache the result
+    if (!options?.noCache) {
+      cacheManager.set(cacheKey, result);
+    }
+
+    return result;
   }
 
   /**
@@ -152,7 +250,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     const baseTokens = 2000;
     const diffTokens = Math.ceil(context.diff.length / 4); // ~4 chars per token
     const filesTokens = context.files.length * 100;
-    
+
     return baseTokens + diffTokens + filesTokens;
   }
 }
@@ -169,10 +267,9 @@ export function createPRAnalyzerAgent(options: ProviderOptions = {}): PRAnalyzer
  * @deprecated Use PRAnalyzerAgent constructor with ProviderOptions instead
  */
 export function createPRAnalyzerAgentLegacy(apiKey: string, modelName?: string): PRAnalyzerAgent {
-  return new PRAnalyzerAgent({ 
-    apiKey, 
+  return new PRAnalyzerAgent({
+    apiKey,
     model: modelName,
     provider: 'anthropic'
   });
 }
-
