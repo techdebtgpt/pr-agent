@@ -1,6 +1,6 @@
 {
   "name": "pr-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Simple AI GitHub PR analyzer",
   "type": "module",
   "main": "./dist/index.js",
