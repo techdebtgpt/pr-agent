@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 📊 Coverage Report section with percentage and file breakdown
   - 💰 AWS Cost Estimates section with monthly cost impact
 
+- **Smart Change Detection**: Agent automatically shows only relevant outputs
+  - Categorizes files as code, test, or DevOps
+  - Code without tests → Shows test suggestions
+  - Terraform/CloudFormation → Shows cost estimates
+  - Coverage tool configured → Shows coverage report
+
 ### New Files
 
 - `src/tools/test-suggestion-tool.ts` - Test framework detection and test generation
@@ -41,13 +47,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/tools/index.ts` - Exports for new tools
 - `src/cli/commands/analyze.command.ts` - Display sections for new features
 
-## [0.1.0] - Initial Release
-
-### Added
-
-- Basic PR analysis with AI (summary, risks, complexity)
-- Architecture documentation integration (.arch-docs)
-- Multi-provider support (Anthropic, OpenAI, Google)
-- CLI interface with `pr-agent analyze` command
-- GitHub Action support
-- Self-refinement workflow using LangGraph
