@@ -6,7 +6,7 @@
 import { StateGraph, Annotation, END } from '@langchain/langgraph';
 import { MemorySaver } from '@langchain/langgraph';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { AgentContext, AgentResult, FileAnalysis, AgentExecutionOptions } from '../types/agent.types.js';
+import { AgentContext, AgentResult, FileAnalysis, AgentExecutionOptions, TestSuggestion, DevOpsCostEstimate, CoverageReport } from '../types/agent.types.js';
 import {
   parseDiff,
   createFileAnalyzerTool,
@@ -16,6 +16,21 @@ import {
 } from '../tools/pr-analysis-tools.js';
 import { formatArchDocsForPrompt, getSecurityContext, getPatternsContext } from '../utils/arch-docs-rag.js';
 import { parseAllArchDocs } from '../utils/arch-docs-parser.js';
+import {
+  isTestFile,
+  isCodeFile,
+  detectTestFramework,
+  generateTestTemplate,
+  suggestTestFilePath,
+} from '../tools/test-suggestion-tool.js';
+import {
+  isDevOpsFile,
+  analyzeDevOpsFiles,
+} from '../tools/devops-cost-estimator.js';
+import {
+  detectCoverageTool,
+  readCoverageReport,
+} from '../tools/coverage-reporter.js';
 
 /**
  * Agent workflow state
@@ -259,6 +274,10 @@ export abstract class BasePRAgentWorkflow {
       keyInsights: [...new Set<string>(stateAny.archDocsKeyInsights || [])],
     } : undefined;
 
+    // Smart change detection - only include relevant outputs
+    const files = parseDiff(context.diff);
+    const enhancedResult = await this.detectAndAnalyzeChangeTypes(files, context);
+
     return {
       summary: finalState.currentSummary,
       fileAnalyses: finalState.fileAnalyses,
@@ -273,6 +292,8 @@ export abstract class BasePRAgentWorkflow {
       executionTime,
       mode: context.mode,
       archDocsImpact,
+      // Conditionally include new features based on change types
+      ...enhancedResult,
     };
   }
 
@@ -303,19 +324,19 @@ export abstract class BasePRAgentWorkflow {
     try {
       // 1. Analyze files
       state = await this.analyzeFilesNode(state);
-      
+
       // 2. Detect risks
       state = await this.detectRisksNode(state);
-      
+
       // 3. Calculate complexity
       state = await this.calculateComplexityNode(state);
-      
+
       // 4. Generate summary
       state = await this.generateSummaryNode(state);
-      
+
       // 5. Generate recommendations (skip quality evaluation)
       state = await this.refineAnalysisNode(state);
-      
+
       // 6. Finalize
       state = await this.finalizeNode(state);
 
@@ -331,6 +352,10 @@ export abstract class BasePRAgentWorkflow {
         keyInsights: [...new Set<string>(stateAny.archDocsKeyInsights || [])],
       } : undefined;
 
+      // Smart change detection - only include relevant outputs
+      const files = parseDiff(context.diff);
+      const enhancedResult = await this.detectAndAnalyzeChangeTypes(files, context);
+
       return {
         summary: state.currentSummary,
         fileAnalyses: state.fileAnalyses,
@@ -345,6 +370,8 @@ export abstract class BasePRAgentWorkflow {
         executionTime,
         mode: context.mode,
         archDocsImpact,
+        // Conditionally include new features based on change types
+        ...enhancedResult,
       };
     } catch (error) {
       console.error('Fast path execution error:', error);
@@ -352,14 +379,113 @@ export abstract class BasePRAgentWorkflow {
     }
   }
 
+  /**
+   * Smart change detection - analyzes files and returns only relevant enhanced features
+   */
+  private async detectAndAnalyzeChangeTypes(
+    files: Array<{ path: string; diff: string; additions: number; deletions: number }>,
+    context: AgentContext
+  ): Promise<{
+    testSuggestions?: TestSuggestion[];
+    devOpsCostEstimates?: DevOpsCostEstimate[];
+    coverageReport?: CoverageReport;
+  }> {
+    const result: {
+      testSuggestions?: TestSuggestion[];
+      devOpsCostEstimates?: DevOpsCostEstimate[];
+      coverageReport?: CoverageReport;
+    } = {};
+
+    // Categorize files by type
+    const codeFiles = files.filter(f => isCodeFile(f.path) && !isTestFile(f.path));
+    const testFiles = files.filter(f => isTestFile(f.path));
+    const devOpsFiles = files.filter(f => isDevOpsFile(f.path).isDevOps);
+
+    console.log(`📊 Change Analysis: ${codeFiles.length} code files, ${testFiles.length} test files, ${devOpsFiles.length} DevOps files`);
+
+    // 1. Developer changes without tests → Test Suggestions
+    if (codeFiles.length > 0 && codeFiles.length > testFiles.length) {
+      console.log(`🧪 Detecting test suggestions for ${codeFiles.length} code files...`);
+
+      const frameworkInfo = detectTestFramework(context.config?.repoPath as string || '.');
+      const testSuggestions: TestSuggestion[] = [];
+
+      for (const file of codeFiles) {
+        // Check if there's a corresponding test file in the PR
+        const baseName = file.path.replace(/\.[^/.]+$/, '').split('/').pop() || '';
+        const hasTest = testFiles.some(t =>
+          t.path.toLowerCase().includes(baseName.toLowerCase())
+        );
+
+        if (!hasTest && file.additions > 5) {
+          // Extract function names from diff for better test generation
+          const functionMatches = file.diff.match(/(?:function|const|let|var|async)\s+(\w+)/g) || [];
+          const functionNames = functionMatches
+            .map(m => m.replace(/(?:function|const|let|var|async)\s+/, ''))
+            .filter(name => name.length > 2 && !['the', 'and', 'for'].includes(name));
+
+          const testCode = generateTestTemplate(
+            frameworkInfo.framework,
+            file.path,
+            file.diff,
+            functionNames.slice(0, 5)
+          );
+
+          testSuggestions.push({
+            forFile: file.path,
+            testFramework: frameworkInfo.framework,
+            testCode,
+            description: `Suggested tests for new/modified code in ${file.path}`,
+            testFilePath: suggestTestFilePath(file.path, frameworkInfo.framework),
+          });
+        }
+      }
+
+      if (testSuggestions.length > 0) {
+        result.testSuggestions = testSuggestions;
+        console.log(`✅ Generated ${testSuggestions.length} test suggestions`);
+      }
+    }
+
+    // 2. DevOps/IaC changes → Cost Estimation
+    if (devOpsFiles.length > 0) {
+      console.log(`💰 Analyzing DevOps costs for ${devOpsFiles.length} files...`);
+
+      const costAnalysis = analyzeDevOpsFiles(devOpsFiles);
+
+      if (costAnalysis.hasDevOpsChanges && costAnalysis.estimates.length > 0) {
+        result.devOpsCostEstimates = costAnalysis.estimates;
+        console.log(`✅ Estimated costs for ${costAnalysis.estimates.length} resources (~$${costAnalysis.totalEstimatedCost.toFixed(2)}/month)`);
+      }
+    }
+
+    // 3. Test/QA changes → Coverage Report (only if configured)
+    if (testFiles.length > 0 || codeFiles.length > 0) {
+      const coverageConfig = detectCoverageTool(context.config?.repoPath as string || '.');
+
+      if (coverageConfig.configured) {
+        console.log(`📊 Checking coverage (${coverageConfig.tool} detected)...`);
+
+        const coverage = readCoverageReport(context.config?.repoPath as string || '.');
+
+        if (coverage.available) {
+          result.coverageReport = coverage;
+          console.log(`✅ Coverage: ${coverage.overallPercentage?.toFixed(1)}%`);
+        }
+      }
+    }
+
+    return result;
+  }
+
   // Workflow nodes
 
   private async analyzeFilesNode(state: typeof PRAgentState.State) {
     const { context } = state;
     const files = parseDiff(context.diff);
-    
+
     console.log(`🔍 Analyzing ${files.length} files...`);
-    
+
     // Show arch-docs status if available
     if (context.archDocs?.available) {
       console.log(`📚 Using architecture documentation (${context.archDocs.totalDocs} docs, ${context.archDocs.relevantDocs.length} relevant sections)`);
@@ -375,9 +501,9 @@ export abstract class BasePRAgentWorkflow {
 
     // Analyze files in batches for detailed insights
     const filesToAnalyze = files.slice(0, 15); // Limit to 15 files for detailed analysis
-    const importantFiles = filesToAnalyze.filter(f => 
+    const importantFiles = filesToAnalyze.filter(f =>
       f.additions + f.deletions > 20 || // Significant changes
-      f.path.includes('config') || 
+      f.path.includes('config') ||
       f.path.includes('schema') ||
       f.path.includes('migration') ||
       f.path.includes('test')
@@ -424,7 +550,7 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
 
         const response = await this.model.invoke(fileDetailsPrompt);
         const content = response.content as string;
-        
+
         // Track tokens
         const usage = (response.response_metadata as any)?.usage;
         const inputTokens = usage?.input_tokens || 0;
@@ -435,7 +561,7 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
           const jsonMatch = content.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             const detailedAnalyses = JSON.parse(jsonMatch[0]);
-            
+
             // Apply detailed analysis to file analyses
             for (const file of importantFiles) {
               const detail = detailedAnalyses[file.path];
@@ -493,7 +619,7 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
     const hasArchDocsContext = archDocsContext && archDocsContext.length > 0;
     const archDocsStages = hasArchDocsContext ? ['file-analysis'] : [];
     const archDocsInsights = [];
-    
+
     if (hasArchDocsContext && context.archDocs?.available) {
       archDocsInsights.push(`Applied ${context.archDocs.relevantDocs.length} architecture documentation sections to analyze files in context of repository standards`);
     }
@@ -509,13 +635,13 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
 
   private async detectRisksNode(state: typeof PRAgentState.State) {
     const { context, fileAnalyses } = state;
-    
+
     console.log('⚠️  Detecting risks...');
 
     // Build context for risk analysis
     const fileList = Array.from(fileAnalyses.entries())
       .slice(0, 15)
-      .map(([path, analysis]) => 
+      .map(([path, analysis]) =>
         `${path} (+${analysis.changes.additions} -${analysis.changes.deletions})`
       )
       .join('\n');
@@ -528,7 +654,7 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
     let allDocs: any[] = [];
     let securityDoc: any = null;
     let patternsDoc: any = null;
-    
+
     if (context.archDocs?.available) {
       allDocs = parseAllArchDocs();
       const secDoc = getSecurityContext(allDocs);
@@ -536,7 +662,7 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
         securityContext = `\n## Security Guidelines from Repository Documentation\n\n${secDoc.substring(0, 3000)}\n`;
         securityDoc = allDocs.find(d => d.filename === 'security');
       }
-      
+
       // Also get patterns that might indicate risks
       const patterns = getPatternsContext(allDocs);
       if (patterns) {
@@ -605,7 +731,7 @@ Only include risks that are actually present. If no significant risks, return an
     try {
       const response = await this.model.invoke(riskPrompt);
       const content = response.content as string;
-      
+
       // Track tokens
       const usage = (response.response_metadata as any)?.usage;
       const inputTokens = usage?.input_tokens || 0;
@@ -614,13 +740,13 @@ Only include risks that are actually present. If no significant risks, return an
       // Parse JSON response
       let risks: any[] = [];
       let hasArchDocsEnhancement = false;
-      
+
       try {
         // Extract JSON from markdown code blocks if present
         const jsonMatch = content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           const parsedRisks = JSON.parse(jsonMatch[0]);
-          
+
           // Check if risks have arch-docs references
           if (parsedRisks.length > 0 && typeof parsedRisks[0] === 'object' && 'archDocsSource' in parsedRisks[0]) {
             // Transform to our RiskItem format
@@ -668,7 +794,7 @@ Only include risks that are actually present. If no significant risks, return an
           patternRisks.push(riskDesc);
         }
       }
-      
+
       if (fileAnalyses.size > 20) {
         const qualityDoc = allDocs.find(d => d.filename === 'code-quality');
         if (qualityDoc && securityContext) {
@@ -684,7 +810,7 @@ Only include risks that are actually present. If no significant risks, return an
           patternRisks.push(`Large change set (${fileAnalyses.size} files) - may be difficult to review thoroughly`);
         }
       }
-      
+
       if (context.diff.includes('DROP TABLE') || context.diff.includes('ALTER TABLE')) {
         if (securityContext) {
           patternRisks.push({
@@ -713,7 +839,7 @@ Only include risks that are actually present. If no significant risks, return an
       // Track arch-docs usage in risk detection
       const archDocsStages = securityContext ? ['risk-detection'] : [];
       const archDocsInsights = [];
-      
+
       if (securityContext && context.archDocs?.available) {
         const enhancedCount = allRisks.filter(r => typeof r === 'object' && r.archDocsReference).length;
         if (enhancedCount > 0) {
@@ -732,7 +858,7 @@ Only include risks that are actually present. If no significant risks, return an
       };
     } catch (error) {
       console.error('Error in risk detection:', error);
-      
+
       // Fallback to basic pattern matching
       const basicRisks: string[] = [];
       if (context.diff.includes('password') || context.diff.includes('secret')) {
@@ -752,7 +878,7 @@ Only include risks that are actually present. If no significant risks, return an
 
   private async calculateComplexityNode(state: typeof PRAgentState.State) {
     const { fileAnalyses, context } = state;
-    
+
     console.log('📊 Calculating complexity...');
 
     const complexities = Array.from(fileAnalyses.values()).map(f => f.complexity);
@@ -763,7 +889,7 @@ Only include risks that are actually present. If no significant risks, return an
     // Track arch-docs influence on complexity
     const archDocsStages = context.archDocs?.available ? ['complexity-calculation'] : [];
     const archDocsInsights = [];
-    
+
     if (context.archDocs?.available) {
       // Check if patterns documentation helped understand complexity
       const allDocs = parseAllArchDocs();
@@ -783,7 +909,7 @@ Only include risks that are actually present. If no significant risks, return an
 
   private async generateSummaryNode(state: typeof PRAgentState.State) {
     const { context, fileAnalyses, currentRisks, currentComplexity } = state;
-    
+
     console.log('📝 Generating detailed summary...');
 
     const totalFiles = fileAnalyses.size;
@@ -793,7 +919,7 @@ Only include risks that are actually present. If no significant risks, return an
     // Build file list with changes
     const fileList = Array.from(fileAnalyses.entries())
       .slice(0, 20)
-      .map(([path, analysis]) => 
+      .map(([path, analysis]) =>
         `- ${path}: +${analysis.changes.additions} -${analysis.changes.deletions} (complexity: ${analysis.complexity}/5)`
       )
       .join('\n');
@@ -848,7 +974,7 @@ Provide a detailed, well-structured summary (3-5 paragraphs) that would help a r
       // Track arch-docs usage in summary
       const archDocsStages = patternsContext ? ['summary-generation'] : [];
       const archDocsInsights = [];
-      
+
       if (patternsContext && context.archDocs?.available) {
         archDocsInsights.push(`Generated summary aligned with repository architecture and established patterns`);
       }
@@ -882,7 +1008,7 @@ ${context.title ? `Title: ${context.title}` : ''}`;
 
   private async evaluateQualityNode(state: typeof PRAgentState.State) {
     const { iteration } = state;
-    
+
     console.log(`🔍 Evaluating quality (iteration ${iteration + 1})...`);
 
     // Simple quality check
@@ -897,20 +1023,20 @@ ${context.title ? `Title: ${context.title}` : ''}`;
 
   private async refineAnalysisNode(state: typeof PRAgentState.State) {
     const { currentSummary, currentRisks, fileAnalyses, context } = state;
-    
+
     console.log('🔄 Refining analysis...');
 
     // Build arch-docs context for refinement
     let archDocsRefinementContext = '';
     if (context.archDocs?.available) {
       const allDocs = parseAllArchDocs();
-      
+
       // Get recommendations from arch-docs
       const recommendationsDoc = allDocs.find(d => d.filename === 'recommendations');
       if (recommendationsDoc) {
         archDocsRefinementContext += `\n## Repository Improvement Guidelines\n\n${recommendationsDoc.content.substring(0, 2000)}\n`;
       }
-      
+
       // Get code quality guidelines
       const qualityDoc = allDocs.find(d => d.filename === 'code-quality');
       if (qualityDoc) {
@@ -953,7 +1079,7 @@ Provide a JSON array of 3-5 specific, actionable recommendations:
     try {
       const response = await this.model.invoke(refinementPrompt);
       const content = response.content as string;
-      
+
       // Track tokens
       const usage = (response.response_metadata as any)?.usage;
       const inputTokens = usage?.input_tokens || 0;
@@ -988,7 +1114,7 @@ Provide a JSON array of 3-5 specific, actionable recommendations:
       // Track arch-docs usage in refinement
       const archDocsStages = archDocsRefinementContext ? ['refinement'] : [];
       const archDocsInsights = [];
-      
+
       if (archDocsRefinementContext && context.archDocs?.available) {
         archDocsInsights.push(`Generated ${recommendations.length} recommendations based on repository quality standards and KPIs`);
       }
@@ -1016,7 +1142,7 @@ Provide a JSON array of 3-5 specific, actionable recommendations:
 
   private async finalizeNode(state: typeof PRAgentState.State) {
     console.log('✨ Finalizing analysis...');
-    
+
     return state;
   }
 
