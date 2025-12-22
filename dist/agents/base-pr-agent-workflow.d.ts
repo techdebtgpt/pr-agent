@@ -54,6 +54,10 @@ export declare abstract class BasePRAgentWorkflow {
      * Fast path execution - skip refinement loop but still use LLM for detailed analysis
      */
     private executeFastPath;
+    /**
+     * Smart change detection - analyzes files and returns only relevant enhanced features
+     */
+    private detectAndAnalyzeChangeTypes;
     private analyzeFilesNode;
     private detectRisksNode;
     private calculateComplexityNode;

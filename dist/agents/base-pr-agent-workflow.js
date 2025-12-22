@@ -7,6 +7,9 @@ import { MemorySaver } from '@langchain/langgraph';
 import { parseDiff, createFileAnalyzerTool, createRiskDetectorTool, createComplexityScorerTool, createSummaryGeneratorTool, } from '../tools/pr-analysis-tools.js';
 import { formatArchDocsForPrompt, getSecurityContext, getPatternsContext } from '../utils/arch-docs-rag.js';
 import { parseAllArchDocs } from '../utils/arch-docs-parser.js';
+import { isTestFile, isCodeFile, detectTestFramework, generateTestTemplate, suggestTestFilePath, } from '../tools/test-suggestion-tool.js';
+import { isDevOpsFile, analyzeDevOpsFiles, } from '../tools/devops-cost-estimator.js';
+import { detectCoverageTool, readCoverageReport, } from '../tools/coverage-reporter.js';
 /**
  * Agent workflow state
  */
@@ -204,6 +207,9 @@ export class BasePRAgentWorkflow {
             influencedStages: [...new Set(stateAny.archDocsInfluencedStages || [])],
             keyInsights: [...new Set(stateAny.archDocsKeyInsights || [])],
         } : undefined;
+        // Smart change detection - only include relevant outputs
+        const files = parseDiff(context.diff);
+        const enhancedResult = await this.detectAndAnalyzeChangeTypes(files, context);
         return {
             summary: finalState.currentSummary,
             fileAnalyses: finalState.fileAnalyses,
@@ -218,6 +224,8 @@ export class BasePRAgentWorkflow {
             executionTime,
             mode: context.mode,
             archDocsImpact,
+            // Conditionally include new features based on change types
+            ...enhancedResult,
         };
     }
     /**
@@ -265,6 +273,9 @@ export class BasePRAgentWorkflow {
                 influencedStages: [...new Set(stateAny.archDocsInfluencedStages || [])],
                 keyInsights: [...new Set(stateAny.archDocsKeyInsights || [])],
             } : undefined;
+            // Smart change detection - only include relevant outputs
+            const files = parseDiff(context.diff);
+            const enhancedResult = await this.detectAndAnalyzeChangeTypes(files, context);
             return {
                 summary: state.currentSummary,
                 fileAnalyses: state.fileAnalyses,
@@ -279,12 +290,77 @@ export class BasePRAgentWorkflow {
                 executionTime,
                 mode: context.mode,
                 archDocsImpact,
+                // Conditionally include new features based on change types
+                ...enhancedResult,
             };
         }
         catch (error) {
             console.error('Fast path execution error:', error);
             throw error;
         }
+    }
+    /**
+     * Smart change detection - analyzes files and returns only relevant enhanced features
+     */
+    async detectAndAnalyzeChangeTypes(files, context) {
+        const result = {};
+        // Categorize files by type
+        const codeFiles = files.filter(f => isCodeFile(f.path) && !isTestFile(f.path));
+        const testFiles = files.filter(f => isTestFile(f.path));
+        const devOpsFiles = files.filter(f => isDevOpsFile(f.path).isDevOps);
+        console.log(`📊 Change Analysis: ${codeFiles.length} code files, ${testFiles.length} test files, ${devOpsFiles.length} DevOps files`);
+        // 1. Developer changes without tests → Test Suggestions
+        if (codeFiles.length > 0 && codeFiles.length > testFiles.length) {
+            console.log(`🧪 Detecting test suggestions for ${codeFiles.length} code files...`);
+            const frameworkInfo = detectTestFramework(context.config?.repoPath || '.');
+            const testSuggestions = [];
+            for (const file of codeFiles) {
+                // Check if there's a corresponding test file in the PR
+                const baseName = file.path.replace(/\.[^/.]+$/, '').split('/').pop() || '';
+                const hasTest = testFiles.some(t => t.path.toLowerCase().includes(baseName.toLowerCase()));
+                if (!hasTest && file.additions > 5) {
+                    // Extract function names from diff for better test generation
+                    const functionMatches = file.diff.match(/(?:function|const|let|var|async)\s+(\w+)/g) || [];
+                    const functionNames = functionMatches
+                        .map(m => m.replace(/(?:function|const|let|var|async)\s+/, ''))
+                        .filter(name => name.length > 2 && !['the', 'and', 'for'].includes(name));
+                    const testCode = generateTestTemplate(frameworkInfo.framework, file.path, file.diff, functionNames.slice(0, 5));
+                    testSuggestions.push({
+                        forFile: file.path,
+                        testFramework: frameworkInfo.framework,
+                        testCode,
+                        description: `Suggested tests for new/modified code in ${file.path}`,
+                        testFilePath: suggestTestFilePath(file.path, frameworkInfo.framework),
+                    });
+                }
+            }
+            if (testSuggestions.length > 0) {
+                result.testSuggestions = testSuggestions;
+                console.log(`✅ Generated ${testSuggestions.length} test suggestions`);
+            }
+        }
+        // 2. DevOps/IaC changes → Cost Estimation
+        if (devOpsFiles.length > 0) {
+            console.log(`💰 Analyzing DevOps costs for ${devOpsFiles.length} files...`);
+            const costAnalysis = analyzeDevOpsFiles(devOpsFiles);
+            if (costAnalysis.hasDevOpsChanges && costAnalysis.estimates.length > 0) {
+                result.devOpsCostEstimates = costAnalysis.estimates;
+                console.log(`✅ Estimated costs for ${costAnalysis.estimates.length} resources (~$${costAnalysis.totalEstimatedCost.toFixed(2)}/month)`);
+            }
+        }
+        // 3. Test/QA changes → Coverage Report (only if configured)
+        if (testFiles.length > 0 || codeFiles.length > 0) {
+            const coverageConfig = detectCoverageTool(context.config?.repoPath || '.');
+            if (coverageConfig.configured) {
+                console.log(`📊 Checking coverage (${coverageConfig.tool} detected)...`);
+                const coverage = readCoverageReport(context.config?.repoPath || '.');
+                if (coverage.available) {
+                    result.coverageReport = coverage;
+                    console.log(`✅ Coverage: ${coverage.overallPercentage?.toFixed(1)}%`);
+                }
+            }
+        }
+        return result;
     }
     // Workflow nodes
     async analyzeFilesNode(state) {
