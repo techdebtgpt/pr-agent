@@ -550,7 +550,7 @@ You need to create a GitHub Actions workflow file in your repository to enable P
          - uses: actions/checkout@v4
    
          - name: Run PR Analyzer
-           uses: techdebtgpt/pr-agent@v1.0.1
+           uses: techdebtgpt/pr-agent@v1.1
            with:
              config-path: .pr-analyzer.yml
            env:
@@ -565,6 +565,7 @@ You need to create a GitHub Actions workflow file in your repository to enable P
              
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
    ```
+   > **Important**: Make sure to use the latest release tag for `techdebtgpt/pr-agent@`. Replace `@v1.1` with the latest version tag from the [releases page](https://github.com/techdebtgpt/pr-agent/releases). For example, if the latest release is `v1.2`, use `techdebtgpt/pr-agent@v1.2`.
 
 3. Commit and push the workflow file to your repository:
    ```bash
