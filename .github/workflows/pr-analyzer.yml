@@ -19,6 +19,8 @@ jobs:
         with:
           config-path: .pr-analyzer.yml
         env:
+          AI_PROVIDER: anthropic
+          AI_MODEL: claude-sonnet-4-5-20250929
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

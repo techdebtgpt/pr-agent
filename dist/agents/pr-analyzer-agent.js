@@ -59,6 +59,9 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
             maxCost: 5.0,
             mode: mode || { summary: true, risks: true, complexity: true },
             archDocs: archDocsContext,
+            language: options?.language,
+            framework: options?.framework,
+            enableStaticAnalysis: options?.enableStaticAnalysis !== false, // Default to true
         };
         // Execute workflow
         const result = await this.execute(context, {
@@ -85,6 +88,9 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
             maxCost: 2.0,
             mode: { summary: true, risks: true, complexity: true },
             archDocs: archDocsContext,
+            language: options?.language,
+            framework: options?.framework,
+            enableStaticAnalysis: options?.enableStaticAnalysis !== false,
         };
         return this.execute(context, {
             skipSelfRefinement: true,

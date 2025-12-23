@@ -37,6 +37,9 @@ export interface AgentContext {
   mode: AnalysisMode;
   config?: Record<string, unknown>;
   archDocs?: ArchDocsContext; // Architecture documentation context
+  language?: string;
+  framework?: string;
+  enableStaticAnalysis?: boolean;
 }
 
 export interface AnalysisMode {
@@ -66,11 +69,18 @@ export interface FileAnalysis {
   recommendations: string[];
 }
 
+export interface Fix {
+  file: string;
+  line?: number;
+  comment: string;
+  severity?: 'critical' | 'warning' | 'suggestion';
+  source?: 'semgrep' | 'ai'; // Track where the fix came from
+}
+
 export interface AgentResult {
   summary: string;
   fileAnalyses: Map<string, FileAnalysis>;
-  overallComplexity: number;
-  overallRisks: string[] | RiskItem[];
+  fixes: Fix[];
   recommendations: string[];
   insights: string[];
   reasoning: string[];
@@ -85,6 +95,13 @@ export interface AgentResult {
     sectionsUsed: number;
     influencedStages: string[];
     keyInsights: string[];
+  };
+  staticAnalysis?: {
+    enabled: boolean;
+    totalFindings: number;
+    errorCount: number;
+    warningCount: number;
+    criticalIssues: string[];
   };
 }
 

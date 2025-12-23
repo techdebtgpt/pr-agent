@@ -32,6 +32,9 @@ const DEFAULT_CONFIG = {
     maxCost: 5.0,
     autoDetectAgent: true,
     agentThreshold: 50000, // bytes
+    language: 'typescript',
+    framework: '',
+    enableStaticAnalysis: true,
   },
   git: {
     defaultBranch: 'origin/main',
@@ -168,7 +171,7 @@ async function initializeConfig(): Promise<void> {
   ]);
 
   // Analysis preferences
-  const { defaultMode, autoDetectAgent } = await inquirer.prompt([
+  const { defaultMode, autoDetectAgent, language, framework, enableStaticAnalysis } = await inquirer.prompt([
     {
       type: 'list',
       name: 'defaultMode',
@@ -187,6 +190,36 @@ async function initializeConfig(): Promise<void> {
       message: 'Auto-detect when to use intelligent agent for large diffs?',
       default: true,
     },
+    {
+      type: 'list',
+      name: 'language',
+      message: 'Primary programming language:',
+      choices: [
+        { name: 'TypeScript', value: 'typescript' },
+        { name: 'JavaScript', value: 'javascript' },
+        { name: 'Python', value: 'python' },
+        { name: 'Java', value: 'java' },
+        { name: 'Go', value: 'go' },
+        { name: 'Rust', value: 'rust' },
+        { name: 'C#', value: 'csharp' },
+        { name: 'Ruby', value: 'ruby' },
+        { name: 'PHP', value: 'php' },
+        { name: 'Other', value: 'other' },
+      ],
+      default: 'typescript',
+    },
+    {
+      type: 'input',
+      name: 'framework',
+      message: 'Framework (if any, e.g., React, Next.js, Django, Express):',
+      default: '',
+    },
+    {
+      type: 'confirm',
+      name: 'enableStaticAnalysis',
+      message: 'Enable Semgrep static analysis for security and code quality?',
+      default: true,
+    },
   ]);
 
   // Start with default config or existing config
@@ -202,6 +235,9 @@ async function initializeConfig(): Promise<void> {
   }
   config.analysis.defaultMode = defaultMode;
   config.analysis.autoDetectAgent = autoDetectAgent;
+  config.analysis.language = language;
+  config.analysis.framework = framework;
+  config.analysis.enableStaticAnalysis = enableStaticAnalysis;
 
   // Save configuration
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
@@ -242,6 +278,8 @@ async function initializeConfig(): Promise<void> {
   console.log(`  • AI Provider: ${config.ai.provider} (${config.ai.model})`);
   console.log(`  • Default Mode: ${config.analysis.defaultMode}`);
   console.log(`  • Auto Agent: ${config.analysis.autoDetectAgent ? 'Enabled' : 'Disabled'}`);
+  console.log(`  • Language: ${config.analysis.language || 'Not set'}${config.analysis.framework ? ` (${config.analysis.framework})` : ''}`);
+  console.log(`  • Static Analysis: ${config.analysis.enableStaticAnalysis ? 'Enabled' : 'Disabled'}`);
 
   console.log(chalk.cyan('\n💡 Tips:'));
   console.log('  • Change provider: pr-agent config --set ai.provider=openai');

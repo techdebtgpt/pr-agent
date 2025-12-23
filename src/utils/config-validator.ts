@@ -31,6 +31,9 @@ export const UserConfigSchema = z.object({
       maxCost: z.number().nonnegative().optional(),
       autoDetectAgent: z.boolean().optional(),
       agentThreshold: z.number().nonnegative().int().optional(),
+      language: z.string().optional(),
+      framework: z.string().optional(),
+      enableStaticAnalysis: z.boolean().optional(),
     })
     .optional(),
   git: z

@@ -51,7 +51,13 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     diff: string,
     title?: string,
     mode?: AnalysisMode,
-    options?: { useArchDocs?: boolean; repoPath?: string }
+    options?: { 
+      useArchDocs?: boolean; 
+      repoPath?: string;
+      language?: string;
+      framework?: string;
+      enableStaticAnalysis?: boolean;
+    }
   ): Promise<AgentResult> {
     // Parse diff into files
     const files = parseDiff(diff);
@@ -72,6 +78,9 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       maxCost: 5.0,
       mode: mode || { summary: true, risks: true, complexity: true },
       archDocs: archDocsContext,
+      language: options?.language,
+      framework: options?.framework,
+      enableStaticAnalysis: options?.enableStaticAnalysis !== false, // Default to true
     };
 
     // Execute workflow
@@ -85,7 +94,17 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
   /**
    * Quick analysis without refinement
    */
-  async quickAnalyze(diff: string, title?: string, options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResult> {
+  async quickAnalyze(
+    diff: string, 
+    title?: string, 
+    options?: { 
+      useArchDocs?: boolean; 
+      repoPath?: string;
+      language?: string;
+      framework?: string;
+      enableStaticAnalysis?: boolean;
+    }
+  ): Promise<AgentResult> {
     const files = parseDiff(diff);
 
     // Build arch-docs context if enabled
@@ -103,6 +122,9 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       maxCost: 2.0,
       mode: { summary: true, risks: true, complexity: true },
       archDocs: archDocsContext,
+      language: options?.language,
+      framework: options?.framework,
+      enableStaticAnalysis: options?.enableStaticAnalysis !== false,
     };
 
     return this.execute(context, {

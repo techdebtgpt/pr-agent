@@ -20,6 +20,9 @@ export declare class PRAnalyzerAgent extends BasePRAgentWorkflow {
     analyze(diff: string, title?: string, mode?: AnalysisMode, options?: {
         useArchDocs?: boolean;
         repoPath?: string;
+        language?: string;
+        framework?: string;
+        enableStaticAnalysis?: boolean;
     }): Promise<AgentResult>;
     /**
      * Quick analysis without refinement
@@ -27,6 +30,9 @@ export declare class PRAnalyzerAgent extends BasePRAgentWorkflow {
     quickAnalyze(diff: string, title?: string, options?: {
         useArchDocs?: boolean;
         repoPath?: string;
+        language?: string;
+        framework?: string;
+        enableStaticAnalysis?: boolean;
     }): Promise<AgentResult>;
     /**
      * Analyze specific files only

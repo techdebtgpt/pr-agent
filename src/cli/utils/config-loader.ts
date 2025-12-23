@@ -23,6 +23,9 @@ export interface UserConfig {
     maxCost?: number;
     autoDetectAgent?: boolean;
     agentThreshold?: number;
+    language?: string;
+    framework?: string;
+    enableStaticAnalysis?: boolean;
   };
   git?: {
     defaultBranch?: string;

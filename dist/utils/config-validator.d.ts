@@ -32,6 +32,9 @@ export declare const UserConfigSchema: z.ZodObject<{
         maxCost: z.ZodOptional<z.ZodNumber>;
         autoDetectAgent: z.ZodOptional<z.ZodBoolean>;
         agentThreshold: z.ZodOptional<z.ZodNumber>;
+        language: z.ZodOptional<z.ZodString>;
+        framework: z.ZodOptional<z.ZodString>;
+        enableStaticAnalysis: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strip>>;
     git: z.ZodOptional<z.ZodObject<{
         defaultBranch: z.ZodOptional<z.ZodString>;
