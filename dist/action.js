@@ -46,36 +46,91 @@ async function run() {
         core.info('Parsing diff and analyzing...');
         const result = await agent.analyze(diff, pr.title);
         core.info(`Analysis complete: ${result.fileAnalyses.size} files analyzed`);
-        // Format the summary
+        // Format for quick reading (1 minute scan)
         let summary = '';
+        const criticalFixes = result.fixes?.filter((f) => f.severity === 'critical') || [];
+        const warningFixes = result.fixes?.filter((f) => f.severity === 'warning') || [];
+        const totalFixes = result.fixes?.length || 0;
+        // Concise summary
         if (result.summary) {
-            summary += `### Summary\n${result.summary}\n\n`;
+            summary += `### 📋 Summary\n${result.summary}\n\n`;
         }
-        if (result.overallRisks.length > 0) {
-            summary += `### Potential Risks\n`;
-            result.overallRisks.forEach((risk) => {
-                if (typeof risk === 'string') {
-                    summary += `- ${risk}\n`;
-                }
-                else if (typeof risk === 'object' && risk.description) {
-                    summary += `- **${risk.description}**\n`;
-                    if (risk.archDocsReference) {
-                        summary += `  - 📚 *From ${risk.archDocsReference.source}*: "${risk.archDocsReference.excerpt}"\n`;
-                        summary += `  - *Reason*: ${risk.archDocsReference.reason}\n`;
-                    }
-                }
+        const allActions = [];
+        if (totalFixes > 0) {
+            const topFixes = [...criticalFixes, ...warningFixes].slice(0, 5);
+            topFixes.forEach((fix) => {
+                allActions.push({
+                    type: 'fix',
+                    content: fix,
+                    source: fix.source || 'ai',
+                });
             });
-            summary += '\n';
+        }
+        // Add recommendations (from AI)
+        if (result.recommendations && result.recommendations.length > 0) {
+            result.recommendations.slice(0, 3).forEach((rec) => {
+                allActions.push({
+                    type: 'recommendation',
+                    content: rec,
+                    source: 'ai',
+                });
+            });
+        }
+        if (allActions.length > 0) {
+            summary += `### 💡 Quick Actions\n\n`;
+            let actionIndex = 1;
+            allActions.forEach((action) => {
+                if (action.type === 'fix') {
+                    const fix = action.content;
+                    const severityIcon = fix.severity === 'critical' ? '🔴' : '🟡';
+                    const severityLabel = fix.severity === 'critical' ? 'CRITICAL' : 'WARNING';
+                    const sourceLabel = action.source === 'semgrep' ? ' [Semgrep]' : ' [AI]';
+                    const shortComment = fix.comment.split('\n')[0].substring(0, 150);
+                    // Format exactly like Semgrep: Number. Icon `file:line` - LABEL [Source]
+                    summary += `  ${actionIndex}. ${severityIcon} \`${fix.file}:${fix.line}\` - ${severityLabel}${sourceLabel}\n`;
+                    // Indented comment line
+                    summary += `     ${shortComment}${fix.comment.length > 150 ? '...' : ''}\n\n`;
+                }
+                else {
+                    // Format recommendations to match Semgrep format
+                    const rec = action.content;
+                    const sourceLabel = action.source === 'semgrep' ? ' [Semgrep]' : ' [AI]';
+                    // Parse recommendation to extract severity
+                    let severityIcon = '🟡';
+                    let severityLabel = 'WARNING';
+                    let recText = rec;
+                    // Check if recommendation starts with **CRITICAL: or **WARNING:
+                    if (rec.match(/^\*\*CRITICAL:/i)) {
+                        severityIcon = '🔴';
+                        severityLabel = 'CRITICAL';
+                        recText = rec.replace(/^\*\*CRITICAL:\s*/i, '').replace(/\*\*/g, '');
+                    }
+                    else if (rec.match(/^\*\*WARNING:/i)) {
+                        severityIcon = '🟡';
+                        severityLabel = 'WARNING';
+                        recText = rec.replace(/^\*\*WARNING:\s*/i, '').replace(/\*\*/g, '');
+                    }
+                    else if (rec.toLowerCase().includes('critical')) {
+                        severityIcon = '🔴';
+                        severityLabel = 'CRITICAL';
+                    }
+                    // Format exactly like Semgrep: Number. Icon - LABEL [Source]
+                    summary += `  ${actionIndex}. ${severityIcon} - ${severityLabel}${sourceLabel}\n`;
+                    // Indented comment line with severity prefix
+                    summary += `     ${severityIcon} **${severityLabel === 'CRITICAL' ? 'Critical' : 'Warning'}**: ${recText.substring(0, 150)}${recText.length > 150 ? '...' : ''}\n\n`;
+                }
+                actionIndex++;
+            });
+            if (totalFixes > 5) {
+                summary += `_${totalFixes - 5} more issues found._\n\n`;
+            }
         }
         else {
-            summary += `### Potential Risks\nNone\n\n`;
+            summary += `### ✅ Status\n\nNo critical issues found.\n\n`;
         }
-        summary += `### Complexity: ${result.overallComplexity}/5\n`;
-        if (result.recommendations && result.recommendations.length > 0) {
-            summary += `\n### Recommendations\n`;
-            result.recommendations.forEach((rec) => {
-                summary += `- ${rec}\n`;
-            });
+        // Token count at the end
+        if (result.totalTokensUsed) {
+            summary += `\n---\n_Total tokens used: ${result.totalTokensUsed.toLocaleString()}_`;
         }
         // Post comment
         await postComment(pr.number, summary, repository, ghToken);

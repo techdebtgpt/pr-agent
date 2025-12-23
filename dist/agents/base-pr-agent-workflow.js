@@ -7,6 +7,7 @@ import { MemorySaver } from '@langchain/langgraph';
 import { parseDiff, createFileAnalyzerTool, createRiskDetectorTool, createComplexityScorerTool, createSummaryGeneratorTool, } from '../tools/pr-analysis-tools.js';
 import { formatArchDocsForPrompt, getSecurityContext, getPatternsContext } from '../utils/arch-docs-rag.js';
 import { parseAllArchDocs } from '../utils/arch-docs-parser.js';
+import { runSemgrepAnalysis, summarizeSemgrepFindings, filterFindingsByChangedFiles } from '../utils/semgrep-runner.js';
 /**
  * Agent workflow state
  */
@@ -30,13 +31,9 @@ export const PRAgentState = Annotation.Root({
         reducer: (_, update) => update,
         default: () => '',
     }),
-    currentRisks: Annotation({
+    fixes: Annotation({
         reducer: (_, update) => update,
         default: () => [],
-    }),
-    currentComplexity: Annotation({
-        reducer: (_, update) => update,
-        default: () => 1,
     }),
     // Quality metrics
     clarityScore: Annotation({
@@ -79,6 +76,15 @@ export const PRAgentState = Annotation.Root({
         reducer: (current, update) => current + update,
         default: () => 0,
     }),
+    // Semgrep static analysis
+    semgrepResult: Annotation({
+        reducer: (_, update) => update,
+        default: () => null,
+    }),
+    semgrepSummary: Annotation({
+        reducer: (_, update) => update,
+        default: () => null,
+    }),
 });
 /**
  * Base class for PR agents with self-refinement workflow
@@ -104,30 +110,20 @@ export class BasePRAgentWorkflow {
      */
     buildWorkflow() {
         const graph = new StateGraph(PRAgentState);
-        // Define nodes
+        // Define nodes - simplified workflow
         graph.addNode('analyzeFiles', this.analyzeFilesNode.bind(this));
-        graph.addNode('detectRisks', this.detectRisksNode.bind(this));
-        graph.addNode('calculateComplexity', this.calculateComplexityNode.bind(this));
+        graph.addNode('runStaticAnalysis', this.runStaticAnalysisNode.bind(this));
+        graph.addNode('generateFixes', this.generateFixesNode.bind(this));
         graph.addNode('generateSummary', this.generateSummaryNode.bind(this));
-        graph.addNode('evaluateQuality', this.evaluateQualityNode.bind(this));
-        graph.addNode('refineAnalysis', this.refineAnalysisNode.bind(this));
         graph.addNode('finalize', this.finalizeNode.bind(this));
         // Set entry point
         const entryPoint = 'analyzeFiles';
         graph.setEntryPoint(entryPoint);
-        // Build workflow graph
-        graph.addEdge(entryPoint, 'detectRisks');
-        graph.addEdge('detectRisks', 'calculateComplexity');
-        graph.addEdge('calculateComplexity', 'generateSummary');
-        graph.addEdge('generateSummary', 'evaluateQuality');
-        // Conditional: refine or finalize
-        graph.addConditionalEdges('evaluateQuality', this.shouldRefine.bind(this), {
-            refine: 'refineAnalysis',
-            finalize: 'finalize',
-        });
-        // After refinement, evaluate again
-        graph.addEdge('refineAnalysis', 'evaluateQuality');
-        // End after finalization
+        // Build simplified linear workflow graph
+        graph.addEdge(entryPoint, 'runStaticAnalysis');
+        graph.addEdge('runStaticAnalysis', 'generateFixes');
+        graph.addEdge('generateFixes', 'generateSummary');
+        graph.addEdge('generateSummary', 'finalize');
         graph.addEdge('finalize', END);
         return graph.compile({ checkpointer: this.checkpointer });
     }
@@ -140,18 +136,12 @@ export class BasePRAgentWorkflow {
         if (options?.skipSelfRefinement) {
             return this.executeFastPath(context, startTime);
         }
-        const config = {
-            maxIterations: 3,
-            clarityThreshold: 80,
-            skipSelfRefinement: false,
-        };
         const initialState = {
             context,
             iteration: 0,
             fileAnalyses: new Map(),
             currentSummary: '',
-            currentRisks: [],
-            currentComplexity: 1,
+            fixes: [],
             clarityScore: 0,
             missingInformation: [],
             recommendations: [],
@@ -159,12 +149,14 @@ export class BasePRAgentWorkflow {
             reasoning: [],
             totalInputTokens: 0,
             totalOutputTokens: 0,
+            semgrepResult: null,
+            semgrepSummary: null,
+            archDocsInfluencedStages: [],
+            archDocsKeyInsights: [],
         };
         const workflowConfig = {
             configurable: {
                 thread_id: `pr-agent-${Date.now()}`,
-                maxIterations: config.maxIterations,
-                clarityThreshold: config.clarityThreshold,
             },
             recursionLimit: 50,
         };
@@ -204,11 +196,18 @@ export class BasePRAgentWorkflow {
             influencedStages: [...new Set(stateAny.archDocsInfluencedStages || [])],
             keyInsights: [...new Set(stateAny.archDocsKeyInsights || [])],
         } : undefined;
+        // Build static analysis summary
+        const staticAnalysis = stateAny.semgrepSummary ? {
+            enabled: true,
+            totalFindings: stateAny.semgrepSummary.totalFindings,
+            errorCount: stateAny.semgrepSummary.errorCount,
+            warningCount: stateAny.semgrepSummary.warningCount,
+            criticalIssues: stateAny.semgrepSummary.criticalFindings.map((f) => f.extra.message).slice(0, 5),
+        } : undefined;
         return {
             summary: finalState.currentSummary,
             fileAnalyses: finalState.fileAnalyses,
-            overallComplexity: finalState.currentComplexity,
-            overallRisks: finalState.currentRisks,
+            fixes: finalState.fixes,
             recommendations: finalState.recommendations,
             insights: finalState.insights,
             reasoning: finalState.reasoning,
@@ -218,6 +217,7 @@ export class BasePRAgentWorkflow {
             executionTime,
             mode: context.mode,
             archDocsImpact,
+            staticAnalysis,
         };
     }
     /**
@@ -230,8 +230,7 @@ export class BasePRAgentWorkflow {
             iteration: 0,
             fileAnalyses: new Map(),
             currentSummary: '',
-            currentRisks: [],
-            currentComplexity: 1,
+            fixes: [],
             clarityScore: 0,
             missingInformation: [],
             recommendations: [],
@@ -239,21 +238,21 @@ export class BasePRAgentWorkflow {
             reasoning: [],
             totalInputTokens: 0,
             totalOutputTokens: 0,
+            semgrepResult: null,
+            semgrepSummary: null,
         };
         // Execute workflow nodes sequentially (skip refinement loop)
         let state = initialState;
         try {
             // 1. Analyze files
             state = await this.analyzeFilesNode(state);
-            // 2. Detect risks
-            state = await this.detectRisksNode(state);
-            // 3. Calculate complexity
-            state = await this.calculateComplexityNode(state);
+            // 2. Run static analysis
+            state = await this.runStaticAnalysisNode(state);
+            // 3. Generate fixes
+            state = await this.generateFixesNode(state);
             // 4. Generate summary
             state = await this.generateSummaryNode(state);
-            // 5. Generate recommendations (skip quality evaluation)
-            state = await this.refineAnalysisNode(state);
-            // 6. Finalize
+            // 5. Finalize (includes recommendations)
             state = await this.finalizeNode(state);
             const executionTime = Date.now() - startTime;
             // Build arch-docs impact summary with deduplication
@@ -265,11 +264,18 @@ export class BasePRAgentWorkflow {
                 influencedStages: [...new Set(stateAny.archDocsInfluencedStages || [])],
                 keyInsights: [...new Set(stateAny.archDocsKeyInsights || [])],
             } : undefined;
+            // Build static analysis summary
+            const staticAnalysis = state.semgrepSummary ? {
+                enabled: true,
+                totalFindings: state.semgrepSummary.totalFindings,
+                errorCount: state.semgrepSummary.errorCount,
+                warningCount: state.semgrepSummary.warningCount,
+                criticalIssues: state.semgrepSummary.criticalFindings.map((f) => f.extra.message).slice(0, 5),
+            } : undefined;
             return {
                 summary: state.currentSummary,
                 fileAnalyses: state.fileAnalyses,
-                overallComplexity: state.currentComplexity,
-                overallRisks: state.currentRisks,
+                fixes: state.fixes,
                 recommendations: state.recommendations,
                 insights: state.insights,
                 reasoning: [...state.reasoning, 'Fast path: Self-refinement evaluation skipped for speed'],
@@ -279,6 +285,7 @@ export class BasePRAgentWorkflow {
                 executionTime,
                 mode: context.mode,
                 archDocsImpact,
+                staticAnalysis,
             };
         }
         catch (error) {
@@ -422,210 +429,209 @@ ${archDocsContext ? 'Each summary MUST reference the specific architecture docum
             archDocsKeyInsights: archDocsInsights,
         };
     }
-    async detectRisksNode(state) {
-        const { context, fileAnalyses } = state;
-        console.log('⚠️  Detecting risks...');
-        // Build context for risk analysis
+    async runStaticAnalysisNode(state) {
+        const { context } = state;
+        // Skip if static analysis is disabled
+        if (!context.enableStaticAnalysis) {
+            console.log('⏭️  Static analysis disabled, skipping...');
+            return state;
+        }
+        try {
+            // Get current working directory for analysis
+            const targetPath = process.cwd();
+            // Run Semgrep analysis
+            const semgrepResult = await runSemgrepAnalysis(targetPath, {
+                enabled: true,
+                timeout: 30,
+                maxFileSize: 1000000, // 1MB
+                excludePaths: [
+                    '**/node_modules/**',
+                    '**/dist/**',
+                    '**/build/**',
+                    '**/.git/**',
+                    '**/*.min.js',
+                    '**/*.map',
+                ],
+            }, context.language, context.framework);
+            // Check for errors
+            if (semgrepResult.errors && semgrepResult.errors.length > 0) {
+                const hasBlockingError = semgrepResult.errors.some(e => e.level === 'error' && e.type === 'semgrep_not_installed');
+                if (hasBlockingError) {
+                    console.log('ℹ️  Semgrep not available, continuing without static analysis');
+                    return state;
+                }
+            }
+            // Filter findings to only include changed files
+            const changedFilePaths = context.files.map(f => f.path);
+            const relevantFindings = filterFindingsByChangedFiles(semgrepResult.results || [], changedFilePaths);
+            // Create filtered result
+            const filteredResult = {
+                ...semgrepResult,
+                results: relevantFindings,
+            };
+            // Summarize findings
+            const summary = summarizeSemgrepFindings(filteredResult);
+            console.log(`   Found ${summary.totalFindings} issues (${summary.errorCount} errors, ${summary.warningCount} warnings)`);
+            return {
+                ...state,
+                semgrepResult: filteredResult,
+                semgrepSummary: summary,
+                insights: [`Static analysis: ${summary.totalFindings} findings in changed files`],
+            };
+        }
+        catch (error) {
+            console.error('Error running static analysis:', error);
+            return {
+                ...state,
+                insights: ['Static analysis encountered an error and was skipped'],
+            };
+        }
+    }
+    async generateFixesNode(state) {
+        const { context, fileAnalyses, semgrepSummary, semgrepResult } = state;
+        console.log('🔧 Generating fixes...');
+        // If static analysis is enabled, convert Semgrep findings to fixes
+        if (context.enableStaticAnalysis && semgrepResult && semgrepSummary && semgrepSummary.totalFindings > 0) {
+            console.log('   Converting Semgrep findings to fixes');
+            const fixes = semgrepResult.results.map((finding) => ({
+                file: finding.path,
+                line: finding.start.line,
+                comment: `${finding.extra.severity === 'ERROR' ? '🔴 **Critical**: ' : finding.extra.severity === 'WARNING' ? '🟡 **Warning**: ' : 'ℹ️ '}${finding.extra.message}\n\n**Rule**: ${finding.check_id}${finding.extra.metadata?.cwe ? `\n**CWE**: ${finding.extra.metadata.cwe.join(', ')}` : ''}${finding.extra.metadata?.owasp ? `\n**OWASP**: ${finding.extra.metadata.owasp.join(', ')}` : ''}`,
+                severity: finding.extra.severity === 'ERROR' ? 'critical' : finding.extra.severity === 'WARNING' ? 'warning' : 'suggestion',
+                source: 'semgrep',
+            }));
+            return {
+                ...state,
+                fixes,
+                insights: [`Generated ${fixes.length} fixes from Semgrep findings`],
+            };
+        }
+        // Otherwise, do AI-based fix generation
+        console.log('   Running AI-based fix generation');
+        // Parse diff to get file paths and line numbers
+        const files = parseDiff(context.diff);
         const fileList = Array.from(fileAnalyses.entries())
             .slice(0, 15)
             .map(([path, analysis]) => `${path} (+${analysis.changes.additions} -${analysis.changes.deletions})`)
             .join('\n');
-        // Get a sample of the diff for risk analysis (limit size)
-        const diffSample = context.diff.substring(0, 8000); // First 8KB for context
+        // Get diff sample with line numbers
+        const diffSample = context.diff.substring(0, 12000);
         // Add security context from arch-docs if available
         let securityContext = '';
         let allDocs = [];
-        let securityDoc = null;
-        let patternsDoc = null;
         if (context.archDocs?.available) {
             allDocs = parseAllArchDocs();
             const secDoc = getSecurityContext(allDocs);
             if (secDoc) {
                 securityContext = `\n## Security Guidelines from Repository Documentation\n\n${secDoc.substring(0, 3000)}\n`;
-                securityDoc = allDocs.find(d => d.filename === 'security');
             }
-            // Also get patterns that might indicate risks
             const patterns = getPatternsContext(allDocs);
             if (patterns) {
                 securityContext += `\n## Repository Patterns and Best Practices\n\n${patterns.substring(0, 2000)}\n`;
-                patternsDoc = allDocs.find(d => d.filename === 'patterns');
             }
         }
-        const riskPrompt = `You are a security and code quality expert analyzing a pull request for potential risks.
+        const fixesPrompt = `You are a code reviewer analyzing a pull request. Generate CRUCIAL, actionable fixes as PR comments.
 ${securityContext}
 
-Analyze the following changes and identify SPECIFIC risks in these categories:
-1. **Security Risks**: Exposed credentials, insecure patterns, authentication/authorization issues
-2. **Breaking Changes**: API changes, database schema changes, removed functionality
-3. **Performance Concerns**: Inefficient algorithms, memory leaks, N+1 queries
-4. **Code Quality**: Complex logic, missing error handling, lack of tests
-5. **Operational Risks**: Configuration changes, deployment concerns, dependency updates
+Analyze the following changes and identify issues that NEED to be fixed. Focus on:
+1. **Security Issues**: Exposed credentials, insecure patterns, authentication/authorization problems
+2. **Critical Bugs**: Logic errors, null pointer risks, race conditions
+3. **Breaking Changes**: API changes without versioning, removed functionality
+4. **Code Quality**: Missing error handling, code smells, anti-patterns
+5. **Performance**: Inefficient algorithms, memory leaks, N+1 queries
 
 PR Title: ${context.title || 'No title provided'}
 
 Files changed:
 ${fileList}
 
-Diff sample:
+Diff:
 \`\`\`
 ${diffSample}
 \`\`\`
 
-${securityContext ? `CRITICAL INSTRUCTIONS:
-- You MUST reference the repository documentation guidelines above when identifying each risk
-- For EVERY risk you identify, find the relevant guideline from the documentation
-- Explain HOW the code change violates or conflicts with the documented standards
-- Quote the specific guideline that makes this a risk
-- Be specific about why this matters based on the repository's own standards
+${securityContext ? `IMPORTANT: Reference repository documentation when applicable.` : ''}
 
-Example format for a risk with documentation:
-{
-  "description": "File exceeds maximum line count recommended for maintainability",
-  "archDocsSource": "code-quality.md",
-  "archDocsExcerpt": "Keep individual files under 500 lines to maintain testability and readability",
-  "reason": "This file contains 990 lines, nearly 2x the repository standard, which increases maintenance burden and makes comprehensive testing more difficult"
-}
-` : ''}
+For EACH issue found, provide:
+- **file**: The file path where the issue exists
+- **line**: Approximate line number (if you can identify it from the diff, otherwise omit)
+- **comment**: Actionable PR comment explaining the issue and how to fix it. Be specific and helpful.
+- **severity**: "critical" (must fix), "warning" (should fix), or "suggestion" (nice to have)
 
-Provide a JSON array of risk objects. Each risk MUST include:
-- description: Clear, specific description of the risk
-${securityContext ? `- archDocsSource: REQUIRED - Which documentation file from above this relates to (e.g., "security.md", "patterns.md", "code-quality.md")
-- archDocsExcerpt: REQUIRED - Direct quote from the repository documentation that this violates
-- reason: REQUIRED - Detailed explanation of why this is a risk based on the specific guideline quoted above
-` : ''}
-
-Format:
-${securityContext ? `[
+Return a JSON array of fix objects:
+[
   {
-    "description": "Specific risk description",
-    "archDocsSource": "documentation-file.md",
-    "archDocsExcerpt": "Exact quote from the documentation",
-    "reason": "Detailed explanation connecting the code change to the guideline violation"
+    "file": "src/path/to/file.ts",
+    "line": 42,
+    "comment": "**Security Issue**: Hardcoded API key detected. Use environment variables instead.\n\n**Fix**: Move to process.env.API_KEY or use a secrets manager.",
+    "severity": "critical"
+  },
+  {
+    "file": "src/utils/helper.ts",
+    "comment": "**Missing Error Handling**: This function can throw but errors aren't caught.\n\n**Fix**: Wrap in try-catch or add error handling.",
+    "severity": "warning"
   }
 ]
 
-DO NOT return simple string arrays. Each risk MUST be an object with archDocsSource, archDocsExcerpt, and reason fields.` : '["risk 1", "risk 2", ...]'}
-
-Only include risks that are actually present. If no significant risks, return an empty array [].`;
+Only include CRUCIAL fixes that matter. If no significant issues, return an empty array [].`;
         try {
-            const response = await this.model.invoke(riskPrompt);
+            const response = await this.model.invoke(fixesPrompt);
             const content = response.content;
             // Track tokens
             const usage = response.response_metadata?.usage;
             const inputTokens = usage?.input_tokens || 0;
             const outputTokens = usage?.output_tokens || 0;
             // Parse JSON response
-            let risks = [];
-            let hasArchDocsEnhancement = false;
+            let fixes = [];
             try {
                 // Extract JSON from markdown code blocks if present
                 const jsonMatch = content.match(/\[[\s\S]*\]/);
                 if (jsonMatch) {
-                    const parsedRisks = JSON.parse(jsonMatch[0]);
-                    // Check if risks have arch-docs references
-                    if (parsedRisks.length > 0 && typeof parsedRisks[0] === 'object' && 'archDocsSource' in parsedRisks[0]) {
-                        // Transform to our RiskItem format
-                        risks = parsedRisks.map((r) => ({
-                            description: r.description,
-                            archDocsReference: r.archDocsSource ? {
-                                source: r.archDocsSource,
-                                excerpt: r.archDocsExcerpt || '',
-                                reason: r.reason || '',
-                            } : undefined,
-                        }));
-                        hasArchDocsEnhancement = true;
-                    }
-                    else if (parsedRisks.length > 0 && typeof parsedRisks[0] === 'string') {
-                        // Legacy format - just strings
-                        risks = parsedRisks;
-                    }
-                    else {
-                        risks = parsedRisks;
-                    }
+                    const parsedFixes = JSON.parse(jsonMatch[0]);
+                    fixes = parsedFixes
+                        .filter((f) => f.file && f.comment)
+                        .map((f) => ({
+                        file: f.file,
+                        line: f.line,
+                        comment: f.comment,
+                        severity: f.severity || 'warning',
+                        source: 'ai',
+                    }))
+                        // Prioritize critical and warning fixes, limit suggestions
+                        .sort((a, b) => {
+                        const severityOrder = { critical: 0, warning: 1, suggestion: 2 };
+                        const aSeverity = a.severity || 'warning';
+                        const bSeverity = b.severity || 'warning';
+                        return (severityOrder[aSeverity] ?? 2) - (severityOrder[bSeverity] ?? 2);
+                    })
+                        // Limit to top 10 fixes (prioritize critical/warning)
+                        .slice(0, 10);
                 }
             }
             catch (parseError) {
-                console.warn('Failed to parse risk JSON, extracting manually');
-                // Fallback: extract bullet points as strings
-                const lines = content.split('\n');
-                risks = lines
-                    .filter(line => line.trim().startsWith('-') || line.trim().startsWith('•'))
-                    .map(line => line.replace(/^[-•]\s*/, '').trim())
-                    .filter(line => line.length > 0);
+                console.warn('Failed to parse fixes JSON:', parseError);
             }
-            // Add basic pattern-based checks with arch-docs enhancement
-            const patternRisks = [];
+            // Add pattern-based fixes for critical issues
             if (context.diff.includes('password') || context.diff.includes('secret') || context.diff.includes('api_key')) {
-                const riskDesc = 'Potential credentials or sensitive data in code changes';
-                if (securityDoc) {
-                    // Always enhance with arch-docs if available
-                    patternRisks.push({
-                        description: riskDesc,
-                        archDocsReference: {
-                            source: 'security.md',
-                            excerpt: 'Never commit credentials, API keys, or secrets to the repository. Use environment variables for all sensitive configuration.',
-                            reason: 'Code changes contain keywords like "password", "secret", or "api_key" which may indicate hardcoded credentials. This violates the repository security policy requiring all secrets to be externalized via environment variables.',
-                        },
-                    });
-                }
-                else {
-                    patternRisks.push(riskDesc);
-                }
+                const fileMatch = context.diff.match(/^diff --git a\/.*? b\/(.+)$/m);
+                const affectedFile = fileMatch ? fileMatch[1] : 'unknown';
+                fixes.push({
+                    file: affectedFile,
+                    comment: '**Security Issue**: Potential hardcoded credentials detected. Use environment variables or a secrets manager instead of hardcoding sensitive values.',
+                    severity: 'critical',
+                    source: 'ai',
+                });
             }
-            if (fileAnalyses.size > 20) {
-                const qualityDoc = allDocs.find(d => d.filename === 'code-quality');
-                if (qualityDoc && securityContext) {
-                    patternRisks.push({
-                        description: `Large change set (${fileAnalyses.size} files) increases review complexity and error risk`,
-                        archDocsReference: {
-                            source: 'code-quality.md',
-                            excerpt: 'Keep pull requests focused and under 15 files when possible for thorough review',
-                            reason: `This PR modifies ${fileAnalyses.size} files, exceeding the recommended limit. Large PRs are harder to review thoroughly and increase the likelihood of missing critical issues.`,
-                        },
-                    });
-                }
-                else {
-                    patternRisks.push(`Large change set (${fileAnalyses.size} files) - may be difficult to review thoroughly`);
-                }
-            }
-            if (context.diff.includes('DROP TABLE') || context.diff.includes('ALTER TABLE')) {
-                if (securityContext) {
-                    patternRisks.push({
-                        description: 'Database schema changes detected - requires careful migration planning',
-                        archDocsReference: {
-                            source: 'patterns.md',
-                            excerpt: 'All database schema changes must be backwards-compatible and include rollback procedures',
-                            reason: 'The changes include database schema modifications (DROP TABLE or ALTER TABLE) which can cause data loss or application downtime if not properly planned and tested.',
-                        },
-                    });
-                }
-                else {
-                    patternRisks.push('Database schema changes detected - requires careful migration planning');
-                }
-            }
-            // Merge risks, avoiding duplicates (for string risks)
-            let allRisks;
-            if (hasArchDocsEnhancement) {
-                // Keep structured risks
-                allRisks = [...risks, ...patternRisks];
-            }
-            else {
-                // Deduplicate string risks
-                allRisks = [...new Set([...risks, ...patternRisks])];
-            }
-            // Track arch-docs usage in risk detection
-            const archDocsStages = securityContext ? ['risk-detection'] : [];
+            // Track arch-docs usage
+            const archDocsStages = securityContext ? ['fix-generation'] : [];
             const archDocsInsights = [];
-            if (securityContext && context.archDocs?.available) {
-                const enhancedCount = allRisks.filter(r => typeof r === 'object' && r.archDocsReference).length;
-                if (enhancedCount > 0) {
-                    archDocsInsights.push(`Linked ${enhancedCount} risks to specific repository security guidelines and best practices`);
-                }
+            if (securityContext && context.archDocs?.available && fixes.length > 0) {
+                archDocsInsights.push(`Generated ${fixes.length} fixes based on repository guidelines`);
             }
             return {
                 ...state,
-                currentRisks: allRisks,
-                insights: [`Identified ${allRisks.length} potential risks`],
+                fixes,
+                insights: [`Generated ${fixes.length} crucial fixes`],
                 totalInputTokens: (state.totalInputTokens || 0) + inputTokens,
                 totalOutputTokens: (state.totalOutputTokens || 0) + outputTokens,
                 archDocsInfluencedStages: archDocsStages,
@@ -633,49 +639,16 @@ Only include risks that are actually present. If no significant risks, return an
             };
         }
         catch (error) {
-            console.error('Error in risk detection:', error);
-            // Fallback to basic pattern matching
-            const basicRisks = [];
-            if (context.diff.includes('password') || context.diff.includes('secret')) {
-                basicRisks.push('Potential credentials in diff');
-            }
-            if (fileAnalyses.size > 15) {
-                basicRisks.push('Large change set - difficult to review');
-            }
+            console.error('Error generating fixes:', error);
             return {
                 ...state,
-                currentRisks: basicRisks,
-                insights: [`Identified ${basicRisks.length} potential risks (basic analysis)`],
+                fixes: [],
+                insights: ['Fix generation encountered an error'],
             };
         }
     }
-    async calculateComplexityNode(state) {
-        const { fileAnalyses, context } = state;
-        console.log('📊 Calculating complexity...');
-        const complexities = Array.from(fileAnalyses.values()).map(f => f.complexity);
-        const avgComplexity = complexities.length > 0
-            ? complexities.reduce((a, b) => a + b, 0) / complexities.length
-            : 1;
-        // Track arch-docs influence on complexity
-        const archDocsStages = context.archDocs?.available ? ['complexity-calculation'] : [];
-        const archDocsInsights = [];
-        if (context.archDocs?.available) {
-            // Check if patterns documentation helped understand complexity
-            const allDocs = parseAllArchDocs();
-            const patterns = getPatternsContext(allDocs);
-            if (patterns) {
-                archDocsInsights.push(`Evaluated complexity against repository design patterns and coding standards`);
-            }
-        }
-        return {
-            ...state,
-            currentComplexity: Math.round(avgComplexity),
-            archDocsInfluencedStages: archDocsStages,
-            archDocsKeyInsights: archDocsInsights,
-        };
-    }
     async generateSummaryNode(state) {
-        const { context, fileAnalyses, currentRisks, currentComplexity } = state;
+        const { context, fileAnalyses, fixes, semgrepSummary } = state;
         console.log('📝 Generating detailed summary...');
         const totalFiles = fileAnalyses.size;
         const totalAdditions = Array.from(fileAnalyses.values()).reduce((sum, f) => sum + f.changes.additions, 0);
@@ -683,7 +656,7 @@ Only include risks that are actually present. If no significant risks, return an
         // Build file list with changes
         const fileList = Array.from(fileAnalyses.entries())
             .slice(0, 20)
-            .map(([path, analysis]) => `- ${path}: +${analysis.changes.additions} -${analysis.changes.deletions} (complexity: ${analysis.complexity}/5)`)
+            .map(([path, analysis]) => `- ${path}: +${analysis.changes.additions} -${analysis.changes.deletions}`)
             .join('\n');
         // Add patterns context from arch-docs if available
         let patternsContext = '';
@@ -694,33 +667,35 @@ Only include risks that are actually present. If no significant risks, return an
                 patternsContext = `\n## Design Patterns from Repository Documentation\n\n${patterns.substring(0, 2000)}\n`;
             }
         }
-        // Create comprehensive prompt for LLM
-        const summaryPrompt = `You are analyzing a pull request. Provide a DETAILED and COMPREHENSIVE summary that covers:
+        // Add Semgrep summary if available
+        let semgrepSummaryContext = '';
+        if (semgrepSummary && semgrepSummary.totalFindings > 0) {
+            semgrepSummaryContext = `\n## Static Analysis Summary (Semgrep)\n\n`;
+            semgrepSummaryContext += `- Total findings: ${semgrepSummary.totalFindings}\n`;
+            semgrepSummaryContext += `- Errors: ${semgrepSummary.errorCount}\n`;
+            semgrepSummaryContext += `- Warnings: ${semgrepSummary.warningCount}\n`;
+            semgrepSummaryContext += `- Categories affected: ${semgrepSummary.categoriesAffected.join(', ')}\n`;
+            semgrepSummaryContext += `- Files with issues: ${semgrepSummary.filesWithIssues.length}\n\n`;
+        }
+        // Create concise prompt for quick reading
+        const summaryPrompt = `Analyze this pull request and provide a BRIEF, scannable summary (2-3 sentences max).
 
-1. **Overall Purpose**: What is this PR trying to accomplish? What problem does it solve?
-2. **Key Changes**: What are the main changes being made? Group related changes together.
-3. **Impact Analysis**: What parts of the system are affected? What are the implications?
-4. **Technical Details**: Mention important technical aspects (new dependencies, API changes, data model changes, etc.)
-5. **Patterns Observed**: Any design patterns, refactoring, or architectural changes?
-${patternsContext}
+Focus on:
+- **What**: What does this PR do? (one sentence)
+- **Why**: What problem does it solve or what feature does it add? (one sentence)
+- **Impact**: What parts of the codebase are affected? (one sentence if significant)
 
 PR Title: ${context.title || 'No title provided'}
+${context.language ? `Language: ${context.language}${context.framework ? ` (${context.framework})` : ''}` : ''}
 
-Statistics:
-- Files changed: ${totalFiles}
-- Lines added: ${totalAdditions}
-- Lines deleted: ${totalDeletions}
-- Overall complexity: ${currentComplexity}/5
-- Risks identified: ${currentRisks.length}
+Stats: ${totalFiles} files, +${totalAdditions}/-${totalDeletions} lines${fixes.length > 0 ? `, ${fixes.filter((f) => f.severity === 'critical').length} critical fixes` : ''}
 
-Files changed:
-${fileList}
+Key files:
+${fileList.split('\n').slice(0, 5).join('\n')}
 
-${currentRisks.length > 0 ? `\nRisks detected:\n${currentRisks.map(r => `- ${r}`).join('\n')}` : ''}
+${semgrepSummaryContext && semgrepSummary ? `Static analysis found ${semgrepSummary.totalFindings} issues (${semgrepSummary.errorCount} critical). ` : ''}
 
-${patternsContext ? 'Consider the design patterns and architecture from the repository documentation when analyzing the changes.\n' : ''}
-
-Provide a detailed, well-structured summary (3-5 paragraphs) that would help a reviewer understand the scope and purpose of this PR.`;
+Write a concise summary that helps reviewers quickly understand the PR's purpose and scope. Be direct and specific.`;
         try {
             const response = await this.model.invoke(summaryPrompt);
             const detailedSummary = response.content;
@@ -733,6 +708,9 @@ Provide a detailed, well-structured summary (3-5 paragraphs) that would help a r
             const archDocsInsights = [];
             if (patternsContext && context.archDocs?.available) {
                 archDocsInsights.push(`Generated summary aligned with repository architecture and established patterns`);
+            }
+            if (semgrepSummary && semgrepSummary.totalFindings > 0) {
+                archDocsInsights.push(`Incorporated ${semgrepSummary.totalFindings} static analysis findings into summary`);
             }
             return {
                 ...state,
@@ -750,8 +728,7 @@ Provide a detailed, well-structured summary (3-5 paragraphs) that would help a r
 - Files changed: ${totalFiles}
 - Additions: ${totalAdditions}
 - Deletions: ${totalDeletions}
-- Overall complexity: ${currentComplexity}/5
-- Risks identified: ${currentRisks.length}
+- Fixes identified: ${fixes.length}
 
 ${context.title ? `Title: ${context.title}` : ''}`;
             return {
@@ -760,21 +737,10 @@ ${context.title ? `Title: ${context.title}` : ''}`;
             };
         }
     }
-    async evaluateQualityNode(state) {
-        const { iteration } = state;
-        console.log(`🔍 Evaluating quality (iteration ${iteration + 1})...`);
-        // Simple quality check
-        const clarityScore = 85; // Placeholder
-        return {
-            ...state,
-            clarityScore,
-            iteration: iteration + 1,
-        };
-    }
-    async refineAnalysisNode(state) {
-        const { currentSummary, currentRisks, fileAnalyses, context } = state;
-        console.log('🔄 Refining analysis...');
-        // Build arch-docs context for refinement
+    async finalizeNode(state) {
+        const { currentSummary, fixes, fileAnalyses, context } = state;
+        console.log('✨ Finalizing analysis and generating recommendations...');
+        // Build arch-docs context for recommendations if available
         let archDocsRefinementContext = '';
         if (context.archDocs?.available) {
             const allDocs = parseAllArchDocs();
@@ -788,37 +754,23 @@ ${context.title ? `Title: ${context.title}` : ''}`;
             if (qualityDoc) {
                 archDocsRefinementContext += `\n## Code Quality Standards\n\n${qualityDoc.content.substring(0, 2000)}\n`;
             }
-            // Get KPI metrics
-            const kpiDoc = allDocs.find(d => d.filename === 'kpi');
-            if (kpiDoc) {
-                archDocsRefinementContext += `\n## Repository Health KPIs\n\n${kpiDoc.content.substring(0, 1500)}\n`;
-            }
         }
-        // Generate comprehensive recommendations
-        const refinementPrompt = `Based on this PR analysis, provide specific, actionable recommendations for the developer and reviewers.
-${archDocsRefinementContext}
-
-PR Summary:
-${currentSummary}
-
-Risks Identified:
-${currentRisks.map(r => `- ${r}`).join('\n')}
-
-Files Changed: ${fileAnalyses.size}
-
-Consider:
-1. Code organization and structure improvements
-2. Testing recommendations
-3. Documentation needs
-4. Performance optimizations
-5. Security enhancements
-6. Review process suggestions
-${archDocsRefinementContext ? '7. Alignment with repository standards and KPIs from arch-docs\n' : ''}
-
-${archDocsRefinementContext ? 'Use the repository guidelines and standards above to ensure recommendations align with established practices.\n' : ''}
-
-Provide a JSON array of 3-5 specific, actionable recommendations:
-["recommendation 1", "recommendation 2", ...]`;
+        // Generate recommendations
+        const refinementPrompt = `Based on this PR analysis, provide 3-5 specific, actionable recommendations.
+    ${archDocsRefinementContext}
+    
+    PR Summary:
+    ${currentSummary}
+    
+    Fixes Identified: ${fixes.length}
+    ${fixes.length > 0 ? `\nKey fixes:\n${fixes.slice(0, 5).map(f => `- ${f.file}${f.line ? `:${f.line}` : ''}: ${f.comment.substring(0, 100)}...`).join('\n')}` : ''}
+    
+    Files Changed: ${fileAnalyses.size}
+    
+    ${archDocsRefinementContext ? 'Use the repository guidelines above to ensure recommendations align with established practices.\n' : ''}
+    
+    Provide a JSON array of recommendations:
+    ["recommendation 1", "recommendation 2", ...]`;
         try {
             const response = await this.model.invoke(refinementPrompt);
             const content = response.content;
@@ -851,23 +803,23 @@ Provide a JSON array of 3-5 specific, actionable recommendations:
                     'Consider performance implications of changes',
                 ];
             }
-            // Track arch-docs usage in refinement
-            const archDocsStages = archDocsRefinementContext ? ['refinement'] : [];
+            // Track arch-docs usage
+            const archDocsStages = archDocsRefinementContext ? ['finalization'] : [];
             const archDocsInsights = [];
             if (archDocsRefinementContext && context.archDocs?.available) {
-                archDocsInsights.push(`Generated ${recommendations.length} recommendations based on repository quality standards and KPIs`);
+                archDocsInsights.push(`Generated ${recommendations.length} recommendations based on repository quality standards`);
             }
             return {
                 ...state,
                 recommendations,
                 totalInputTokens: (state.totalInputTokens || 0) + inputTokens,
                 totalOutputTokens: (state.totalOutputTokens || 0) + outputTokens,
-                archDocsInfluencedStages: archDocsStages,
-                archDocsKeyInsights: archDocsInsights,
+                archDocsInfluencedStages: [...(state.archDocsInfluencedStages || []), ...archDocsStages],
+                archDocsKeyInsights: [...(state.archDocsKeyInsights || []), ...archDocsInsights],
             };
         }
         catch (error) {
-            console.error('Error refining analysis:', error);
+            console.error('Error generating recommendations:', error);
             return {
                 ...state,
                 recommendations: [
@@ -877,25 +829,6 @@ Provide a JSON array of 3-5 specific, actionable recommendations:
                 ],
             };
         }
-    }
-    async finalizeNode(state) {
-        console.log('✨ Finalizing analysis...');
-        return state;
-    }
-    shouldRefine(state) {
-        // Use defaults if config not accessible
-        const maxIterations = 3;
-        const clarityThreshold = 80;
-        if (state.iteration >= maxIterations) {
-            console.log(`⏹️  Stopping: Max iterations (${maxIterations}) reached`);
-            return 'finalize';
-        }
-        if (state.clarityScore >= clarityThreshold) {
-            console.log(`✅ Stopping: Clarity threshold (${clarityThreshold}) achieved`);
-            return 'finalize';
-        }
-        console.log(`🔄 Continuing: Iteration ${state.iteration}, clarity ${state.clarityScore}`);
-        return 'refine';
     }
 }
 //# sourceMappingURL=base-pr-agent-workflow.js.map

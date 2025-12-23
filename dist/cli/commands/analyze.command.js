@@ -354,6 +354,9 @@ export async function analyzePR(options = {}) {
         const result = await agent.analyze(diff, title, mode, {
             useArchDocs: useArchDocs && hasArchDocs,
             repoPath: process.cwd(),
+            language: config.analysis?.language,
+            framework: config.analysis?.framework,
+            enableStaticAnalysis: config.analysis?.enableStaticAnalysis !== false,
         });
         // Display results
         displayAgentResults(result, mode, options.verbose || false);
@@ -410,137 +413,90 @@ function displayAgentResults(result, mode, verbose) {
     cleanSummary = cleanSummary.replace(/^#+\s*PR Analysis:?\s*/im, '');
     cleanSummary = cleanSummary.replace(/^##\s*Summary\s*/im, '');
     cleanSummary = cleanSummary.trim();
+    const criticalFixes = result.fixes?.filter((f) => f.severity === 'critical') || [];
+    const warningFixes = result.fixes?.filter((f) => f.severity === 'warning') || [];
+    const totalFixes = result.fixes?.length || 0;
     if (mode.summary) {
-        console.log(chalk.cyan.bold('📋 Overall Summary\n'));
+        console.log(chalk.cyan.bold('📋 Summary\n'));
         console.log(chalk.white(cleanSummary));
         console.log('\n');
     }
-    // Group risks by file for better organization
-    if (mode.risks && result.fileAnalyses.size > 0) {
-        const fileEntries = Array.from(result.fileAnalyses.entries());
-        const filesWithRisks = fileEntries.filter(([_, analysis]) => analysis.risks.length > 0);
-        if (filesWithRisks.length > 0) {
-            console.log(chalk.yellow.bold(`⚠️  Risks by File (${filesWithRisks.length} files with risks)\n`));
-            filesWithRisks.forEach(([path, analysis]) => {
-                console.log(chalk.cyan(`  ${path}`));
-                analysis.risks.forEach((risk, i) => {
-                    if (typeof risk === 'string') {
-                        const cleanRisk = risk.replace(/^\[File: [^\]]+\]\s*/, '');
-                        console.log(chalk.white(`    ${i + 1}. ${cleanRisk}`));
-                    }
-                    else if (typeof risk === 'object' && risk.description) {
-                        console.log(chalk.white(`    ${i + 1}. ${risk.description}`));
-                        if (risk.archDocsReference) {
-                            console.log(chalk.gray(`       📚 From ${risk.archDocsReference.source}:`));
-                            console.log(chalk.gray(`       "${risk.archDocsReference.excerpt}"`));
-                            console.log(chalk.yellow(`       → ${risk.archDocsReference.reason}`));
-                        }
-                    }
-                });
+    // Combined quick actions section - only fixes with line numbers (for PR comments)
+    // Filter: only critical/warning, must have line number, sort critical first
+    const prCommentFixes = result.fixes
+        ?.filter((f) => (f.severity === 'critical' || f.severity === 'warning') &&
+        f.line !== undefined &&
+        f.line !== null)
+        .sort((a, b) => {
+        // Sort: critical first, then warning
+        if (a.severity === 'critical' && b.severity !== 'critical')
+            return -1;
+        if (a.severity !== 'critical' && b.severity === 'critical')
+            return 1;
+        return 0;
+    }) || [];
+    // Add recommendations (from AI) - only if we have critical issues
+    const recommendations = (criticalFixes.length > 0 && result.recommendations)
+        ? result.recommendations.slice(0, 3)
+        : [];
+    if (prCommentFixes.length > 0 || recommendations.length > 0) {
+        console.log(chalk.cyan.bold(`💡 Quick Actions\n`));
+        let actionIndex = 1;
+        // Show fixes with line numbers (sorted critical first)
+        prCommentFixes.forEach((fix) => {
+            const severityIcon = fix.severity === 'critical' ? chalk.red('🔴') : chalk.yellow('🟡');
+            const severityLabel = fix.severity === 'critical' ? chalk.red.bold('CRITICAL') : chalk.yellow.bold('WARNING');
+            const sourceLabel = fix.source === 'semgrep' ? chalk.blue(' [Semgrep]') : chalk.magenta(' [AI]');
+            const shortComment = fix.comment.split('\n')[0].substring(0, 120);
+            console.log(chalk.white(`  ${actionIndex}. ${severityIcon} ${chalk.cyan(`\`${fix.file}:${fix.line}\``)} - ${severityLabel}${sourceLabel}`));
+            console.log(chalk.gray(`     ${shortComment}${fix.comment.length > 120 ? '...' : ''}`));
+            console.log('');
+            actionIndex++;
+        });
+        // Show recommendations if we have critical fixes - format to match Semgrep
+        if (recommendations.length > 0) {
+            recommendations.forEach((rec) => {
+                // Parse recommendation to extract severity
+                let severityIcon = chalk.yellow('🟡');
+                let severityLabel = chalk.yellow.bold('WARNING');
+                let recText = rec;
+                // Check if recommendation starts with **CRITICAL: or **WARNING:
+                if (rec.match(/^\*\*CRITICAL:/i)) {
+                    severityIcon = chalk.red('🔴');
+                    severityLabel = chalk.red.bold('CRITICAL');
+                    recText = rec.replace(/^\*\*CRITICAL:\s*/i, '').replace(/\*\*/g, '');
+                }
+                else if (rec.match(/^\*\*WARNING:/i)) {
+                    severityIcon = chalk.yellow('🟡');
+                    severityLabel = chalk.yellow.bold('WARNING');
+                    recText = rec.replace(/^\*\*WARNING:\s*/i, '').replace(/\*\*/g, '');
+                }
+                else if (rec.toLowerCase().includes('critical')) {
+                    severityIcon = chalk.red('🔴');
+                    severityLabel = chalk.red.bold('CRITICAL');
+                }
+                const sourceLabel = chalk.magenta(' [AI]');
+                const shortComment = recText.substring(0, 120);
+                // Format exactly like Semgrep: Number. Icon - LABEL [Source]
+                console.log(chalk.white(`  ${actionIndex}. ${severityIcon} - ${severityLabel}${sourceLabel}`));
+                // Indented comment line with severity prefix
+                console.log(chalk.gray(`     ${severityIcon} **${severityLabel.includes('CRITICAL') ? 'Critical' : 'Warning'}**: ${shortComment}${recText.length > 120 ? '...' : ''}`));
                 console.log('');
+                actionIndex++;
             });
         }
-        else if (result.overallRisks.length > 0) {
-            console.log(chalk.yellow.bold('⚠️  Overall Risks\n'));
-            result.overallRisks.forEach((risk, i) => {
-                if (typeof risk === 'string') {
-                    console.log(chalk.white(`  ${i + 1}. ${risk}`));
-                }
-                else if (typeof risk === 'object' && risk.description) {
-                    console.log(chalk.white(`  ${i + 1}. ${risk.description}`));
-                    if (risk.archDocsReference) {
-                        console.log(chalk.gray(`     📚 From ${risk.archDocsReference.source}:`));
-                        console.log(chalk.gray(`     "${risk.archDocsReference.excerpt}"`));
-                        console.log(chalk.yellow(`     → ${risk.archDocsReference.reason}`));
-                    }
-                }
-            });
-            console.log('\n');
-        }
-        else {
-            console.log(chalk.yellow.bold('⚠️  Risks\n'));
-            console.log(chalk.white('  None identified\n\n'));
+        const totalFilteredFixes = result.fixes?.filter((f) => (f.severity === 'critical' || f.severity === 'warning') && f.line !== undefined && f.line !== null).length || 0;
+        if (totalFilteredFixes > prCommentFixes.length) {
+            console.log(chalk.gray(`  ... and ${totalFilteredFixes - prCommentFixes.length} more issues\n`));
         }
     }
-    if (mode.complexity) {
-        console.log(chalk.magenta.bold(`📊 Overall Complexity: ${result.overallComplexity}/5\n`));
+    else {
+        console.log(chalk.green.bold('✅ Status\n'));
+        console.log(chalk.white('  No critical issues found.\n\n'));
     }
-    // Show file-level complexity summary if requested
-    if ((mode.summary || mode.complexity) && result.fileAnalyses.size > 0) {
-        console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-        console.log(chalk.cyan.bold(`\n📁 File Analysis (${result.fileAnalyses.size} files)\n`));
-        const fileEntries = Array.from(result.fileAnalyses.entries());
-        const highComplexity = fileEntries.filter(([_, analysis]) => analysis.complexity >= 4);
-        const mediumComplexity = fileEntries.filter(([_, analysis]) => analysis.complexity === 3);
-        if (highComplexity.length > 0) {
-            console.log(chalk.red.bold('🔴 High Complexity:\n'));
-            highComplexity.forEach(([path, analysis]) => {
-                console.log(chalk.white(`  • ${path} (${analysis.complexity}/5)`));
-                if (mode.risks && analysis.risks.length > 0) {
-                    console.log(chalk.gray(`    ${analysis.risks.length} risk${analysis.risks.length > 1 ? 's' : ''} found`));
-                }
-            });
-            console.log('');
-        }
-        if (mediumComplexity.length > 0 && mediumComplexity.length <= 10) {
-            console.log(chalk.yellow.bold('🟡 Medium Complexity:\n'));
-            mediumComplexity.slice(0, 5).forEach(([path, analysis]) => {
-                console.log(chalk.white(`  • ${path} (${analysis.complexity}/5)`));
-            });
-            if (mediumComplexity.length > 5) {
-                console.log(chalk.gray(`  ... and ${mediumComplexity.length - 5} more`));
-            }
-            console.log('');
-        }
-    }
-    // Show recommendations if available
-    if (result.recommendations.length > 0) {
-        console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-        console.log(chalk.cyan.bold('\n💡 Recommendations\n'));
-        result.recommendations.forEach((rec, i) => {
-            console.log(chalk.white(`  ${i + 1}. ${rec}`));
-        });
-        console.log('\n');
-    }
-    // Show agent reasoning if available (minimal)
-    if (verbose && result.reasoning.length > 0 && result.reasoning.length <= 5) {
-        console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-        console.log(chalk.cyan.bold('\n🤔 Analysis Strategy\n'));
-        result.reasoning.forEach((reason, i) => {
-            if (reason.includes('Strategy:') || i === 0) {
-                console.log(chalk.gray(`  ${reason.substring(0, 150)}${reason.length > 150 ? '...' : ''}`));
-            }
-        });
-        console.log('\n');
-    }
-    // Show arch-docs impact if used
-    if (result.archDocsImpact?.used) {
-        console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-        console.log(chalk.blue.bold('\n📚 Architecture Documentation Impact\n'));
-        console.log(chalk.white(`Documents analyzed: ${result.archDocsImpact.docsAvailable}`));
-        console.log(chalk.white(`Relevant sections used: ${result.archDocsImpact.sectionsUsed}\n`));
-        if (result.archDocsImpact.influencedStages.length > 0) {
-            console.log(chalk.cyan('Stages influenced by arch-docs:'));
-            result.archDocsImpact.influencedStages.forEach((stage) => {
-                const stageEmoji = stage === 'file-analysis' ? '🔍' :
-                    stage === 'risk-detection' ? '⚠️' :
-                        stage === 'complexity-calculation' ? '📊' :
-                            stage === 'summary-generation' ? '📝' :
-                                stage === 'refinement' ? '🔄' : '✨';
-                console.log(chalk.white(`  ${stageEmoji} ${stage}`));
-            });
-            console.log('');
-        }
-        if (result.archDocsImpact.keyInsights.length > 0) {
-            console.log(chalk.cyan('Key insights from arch-docs integration:\n'));
-            result.archDocsImpact.keyInsights.forEach((insight, i) => {
-                console.log(chalk.white(`  ${i + 1}. ${insight}`));
-            });
-            console.log('');
-        }
-    }
+    // Token count at the end
     if (result.totalTokensUsed) {
-        console.log(chalk.gray(`\nTotal tokens used: ${result.totalTokensUsed.toLocaleString()}`));
+        console.log(chalk.gray(`Total tokens used: ${result.totalTokensUsed.toLocaleString()}`));
     }
     console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
 }

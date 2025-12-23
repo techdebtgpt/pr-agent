@@ -11,6 +11,9 @@ export interface PromptAnswers {
     saveApiKey?: boolean;
     defaultMode?: string;
     autoDetectAgent?: boolean;
+    language?: string;
+    framework?: string;
+    enableStaticAnalysis?: boolean;
 }
 /**
  * Get existing configuration if available

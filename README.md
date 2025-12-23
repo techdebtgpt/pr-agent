@@ -12,15 +12,19 @@ PR Agent analyzes your code changes and provides:
 - **Complexity Rating**: A 1-5 scale rating of complexity with file-level breakdown
 - **Actionable Insights**: Specific recommendations based on your codebase
 - **Architecture-Aware Analysis**: Leverages your `.arch-docs` for context-aware reviews
+- **Static Analysis**: Semgrep integration for security vulnerabilities and code quality issues
 
 ## Features
 
 ✨ **Intelligent Agent Mode** - Automatically handles large diffs without chunking  
 🏗️ **Architecture Documentation Integration** - Uses `.arch-docs` for smarter analysis  
+🔬 **Static Analysis Integration** - Semgrep-powered security and code quality scanning  
 🔌 **Multiple AI Providers** - Anthropic Claude, OpenAI GPT, Google Gemini  
 🖥️ **CLI & GitHub Action** - Use locally or in CI/CD pipelines  
 📊 **File-Level Analysis** - Individual risk and complexity scores per file  
-⚙️ **Configurable** - Customize models, providers, and analysis modes
+🌐 **Language-Aware** - Supports TypeScript, JavaScript, Python, Java, Go, Rust, and more  
+⚙️ **Configurable** - Customize models, providers, and analysis modes  
+🎨 **Unified Output Format** - Semgrep and AI findings use consistent formatting, sorted by severity
 
 ## Quick Reference
 
@@ -54,6 +58,7 @@ pr-agent help                       # Show help
   - [Analyze Command](#analyze-command)
   - [Configuration](#configuration)
 - [Architecture Documentation Integration](#architecture-documentation-integration)
+- [Static Analysis Integration](#static-analysis-integration)
 - [GitHub Action Usage](#github-action-usage)
 - [Supported AI Models](#supported-ai-models)
 - [Common Use Cases](#common-use-cases)
@@ -242,7 +247,10 @@ pr-agent config --reset
     "defaultMode": "full",
     "maxCost": 5.0,
     "autoDetectAgent": true,
-    "agentThreshold": 50000
+    "agentThreshold": 50000,
+    "language": "typescript",
+    "framework": "react",
+    "enableStaticAnalysis": true
   },
   "git": {
     "defaultBranch": "origin/main",
@@ -351,6 +359,112 @@ When you run `pr-agent analyze`, it automatically:
 1. **Detects `.arch-docs` folder** in your repository
 2. **Extracts relevant sections** based on your PR changes
 3. **Provides context** to the AI about your architecture
+
+## Static Analysis Integration
+
+PR Agent integrates with [Semgrep](https://semgrep.dev) for comprehensive static analysis, detecting security vulnerabilities and code quality issues.
+
+### Prerequisites
+
+Install Semgrep on your system:
+
+```bash
+# macOS
+brew install semgrep
+
+# Linux
+pip install semgrep
+
+# Or use Docker
+docker pull semgrep/semgrep
+```
+
+For more installation options, visit: https://semgrep.dev/docs/getting-started/
+
+### Configuration
+
+Static analysis is configured during setup:
+
+```bash
+pr-agent config --init
+```
+
+You'll be prompted to:
+1. Select your **primary programming language** (TypeScript, Python, Java, Go, etc.)
+2. Specify your **framework** (React, Django, Express, etc.)
+3. Enable or disable **static analysis**
+
+**Manual Configuration:**
+
+```bash
+# Enable static analysis
+pr-agent config --set analysis.enableStaticAnalysis=true
+
+# Set language
+pr-agent config --set analysis.language=typescript
+
+# Set framework
+pr-agent config --set analysis.framework=react
+```
+
+### How It Works
+
+When static analysis is enabled:
+
+1. **Semgrep runs** automatically during PR analysis
+2. **Findings are filtered** to only include changed files
+3. **AI agent analyzes** the Semgrep results
+4. **Risks are integrated** into the overall assessment
+5. **Recommendations** are generated based on findings
+
+### Supported Languages
+
+- **TypeScript** / JavaScript
+- **Python** (Django, Flask)
+- **Java** (Spring)
+- **Go**
+- **Rust**
+- **C#** (.NET)
+- **Ruby** (Rails)
+- **PHP** (Laravel)
+
+### Output Example
+
+```
+🔬 Static Analysis (Semgrep)
+
+Total findings: 12
+  • Errors: 3
+  • Warnings: 9
+
+Critical Issues:
+
+  1. [ERROR] Potential SQL injection vulnerability
+     File: src/database/query.ts:45
+     Rule: typescript.lang.security.sql-injection
+     
+  2. [ERROR] Hardcoded credentials detected
+     File: src/config/database.ts:12
+     Rule: generic.secrets.hardcoded-credentials
+     
+  3. [ERROR] Use of eval() is dangerous
+     File: src/utils/parser.ts:89
+     Rule: javascript.lang.security.eval-detected
+```
+
+### Disabling Static Analysis
+
+If you don't have Semgrep installed or want to skip it:
+
+```bash
+# Disable globally
+pr-agent config --set analysis.enableStaticAnalysis=false
+
+# Or skip in config during setup
+# Select "No" when prompted for static analysis
+```
+
+**Note:** Static analysis will automatically be skipped if Semgrep is not installed.
 4. **Identifies violations** of documented patterns or guidelines
 5. **Suggests improvements** aligned with your architecture
 
@@ -440,7 +554,15 @@ You need to create a GitHub Actions workflow file in your repository to enable P
            with:
              config-path: .pr-analyzer.yml
            env:
+             # Use one of these API keys (depending on your provider)
              ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+             # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+             # GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+             
+             # Optional: Specify provider and model
+             # AI_PROVIDER: anthropic  # Options: anthropic, openai, google
+             # AI_MODEL: claude-sonnet-4-5-20250929
+             
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
    ```
 
@@ -507,34 +629,48 @@ Once set up, PR Agent automatically runs on:
 ### What Happens
 
 1. **PR Opened/Updated**: When a PR is created or updated, the workflow triggers
-2. **Fetch Changes**: The action retrieves all file changes (diffs) from the PR
-3. **Architecture Context**: Loads relevant sections from `.arch-docs` (if available)
-4. **AI Analysis**: Sends the diff with architecture context to the AI for analysis
-5. **Post Comment**: Posts a comprehensive analysis comment on the PR
+2. **Fetch Changes**: The action retrieves all file changes (diffs) from the PR using GitHub API
+3. **Static Analysis**: Runs Semgrep analysis (if enabled) to detect security vulnerabilities and code quality issues
+4. **Architecture Context**: Loads relevant sections from `.arch-docs` (if available)
+5. **AI Analysis**: Uses LangChain agent to analyze the diff with architecture context and Semgrep findings
+6. **Format Results**: Formats findings in a unified Semgrep-style format, sorted by severity (critical first)
 
 ### Example Output
 
 When PR Agent analyzes your pull request, it posts a comment like:
 
 ```markdown
-## 🤖 AI Analysis
+## 🤖 AI Analysis (PR Agent by TechDebtGPT)
 
-### Summary
+### 📋 Summary
 This PR refactors the authentication middleware to use JWT tokens instead of session-based auth. It introduces a new TokenService class and updates all route handlers to use the new authentication method.
 
-### Potential Risks
-- The migration from session to JWT may break existing authenticated users
-- No token expiration handling is implemented in the TokenService
-- Error handling in the authenticate middleware could expose sensitive information
+### 💡 Quick Actions
 
-### Complexity: 4/5
-This is a significant architectural change affecting multiple parts of the application. Careful testing of all authenticated endpoints is recommended.
+  1. 🔴 `src/middleware/auth.ts:45` - CRITICAL [Semgrep]
+     🔴 **Critical**: Detected potential security vulnerability in token validation. Missing expiration check could allow expired tokens to be used.
 
-### Recommendations
-- Add integration tests for the new authentication flow
-- Implement token refresh mechanism
-- Review error messages to ensure no sensitive data leaks
+  2. 🟡 `src/services/token.ts:23` - WARNING [AI]
+     🟡 **Warning**: No token expiration handling is implemented in the TokenService. Consider adding token refresh mechanism.
+
+  3. 🔴 - CRITICAL [AI]
+     🔴 **Critical**: The migration from session to JWT may break existing authenticated users. Add integration tests for the new authentication flow.
+
+  4. 🟡 - WARNING [AI]
+     🟡 **Warning**: Error handling in the authenticate middleware could expose sensitive information. Review error messages to ensure no sensitive data leaks.
+
+_2 more issues found._
+
+---
+_Total tokens used: 28,870_
 ```
+
+**Key Features of the Output:**
+- **Unified Format**: Both Semgrep and AI findings use the same consistent format
+- **Sorted by Severity**: Critical issues appear first, followed by warnings
+- **Source Labeling**: Each finding is labeled with `[Semgrep]` or `[AI]` to show its origin
+- **File References**: Fixes include file path and line number for easy navigation
+- **Actionable Recommendations**: AI-generated recommendations provide specific guidance
 
 ## Development
 
@@ -663,10 +799,11 @@ pr-agent/
 1. **Workflow Setup**: The `.github/workflows/pr-analyzer.yml` file defines when and how PR Agent runs
 2. **Trigger**: GitHub Action triggers automatically on PR events (`opened`, `synchronize`, `reopened`)
 3. **Fetch Diffs**: Uses GitHub API to retrieve all changed files and their diffs
-4. **Arch-Docs Integration**: Loads relevant architecture documentation from `.arch-docs`
-5. **AI Analysis**: Sends to AI with full context (diff + architecture)
-6. **Parse Response**: Extracts structured insights with architecture-aware recommendations
-7. **Post Comment**: Creates a formatted comment on the PR using GitHub API
+4. **Static Analysis**: Runs Semgrep analysis (if enabled) to detect security vulnerabilities in changed files
+5. **Arch-Docs Integration**: Loads relevant architecture documentation from `.arch-docs`
+6. **AI Analysis**: Uses LangChain agent to analyze diff with full context (diff + architecture + Semgrep findings)
+7. **Format Results**: Formats all findings (Semgrep + AI) in unified Semgrep-style format, sorted by severity
+8. **Post Comment**: Creates a formatted comment on the PR with Quick Actions section showing critical issues first
 
 ### Intelligent Agent System
 
@@ -749,10 +886,11 @@ git diff main
 
 #### No Comments Posted
 
-- Verify API key secret is set correctly (e.g., `ANTHROPIC_API_KEY`)
-- Check workflow permissions include `pull-requests: write`
+- Verify API key secret is set correctly (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`)
+- Check workflow permissions include `pull-requests: write` and `issues: write`
 - Review Action logs for error messages
-- Ensure the AI provider matches the API key (Anthropic for Claude, OpenAI for GPT, etc.)
+- Ensure the AI provider matches the API key (Anthropic for Claude, OpenAI for GPT, Google for Gemini)
+- Verify `GITHUB_TOKEN` is available (automatically provided by GitHub Actions)
 
 #### Analysis Failed
 

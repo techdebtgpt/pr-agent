@@ -116,9 +116,42 @@ export async function promptFullConfig(projectPath, options = {}) {
                 message: 'Auto-detect when to use intelligent agent for large diffs?',
                 default: existingConfig?.analysis?.autoDetectAgent !== false,
             },
+            {
+                type: 'list',
+                name: 'language',
+                message: 'Primary programming language:',
+                choices: [
+                    { name: 'TypeScript', value: 'typescript' },
+                    { name: 'JavaScript', value: 'javascript' },
+                    { name: 'Python', value: 'python' },
+                    { name: 'Java', value: 'java' },
+                    { name: 'Go', value: 'go' },
+                    { name: 'Rust', value: 'rust' },
+                    { name: 'C#', value: 'csharp' },
+                    { name: 'Ruby', value: 'ruby' },
+                    { name: 'PHP', value: 'php' },
+                    { name: 'Other', value: 'other' },
+                ],
+                default: existingConfig?.analysis?.language || 'typescript',
+            },
+            {
+                type: 'input',
+                name: 'framework',
+                message: 'Framework (if any, e.g., React, Next.js, Django, Express):',
+                default: existingConfig?.analysis?.framework || '',
+            },
+            {
+                type: 'confirm',
+                name: 'enableStaticAnalysis',
+                message: 'Enable Semgrep static analysis for security and code quality?',
+                default: existingConfig?.analysis?.enableStaticAnalysis !== false,
+            },
         ]);
         answers.defaultMode = analysisPrompts.defaultMode;
         answers.autoDetectAgent = analysisPrompts.autoDetectAgent;
+        answers.language = analysisPrompts.language;
+        answers.framework = analysisPrompts.framework;
+        answers.enableStaticAnalysis = analysisPrompts.enableStaticAnalysis;
     }
     return { answers, existingConfig };
 }
@@ -186,6 +219,8 @@ export function displayConfigSummary(config, configPath) {
     console.log(`  • Model: ${config.ai?.model}`);
     console.log(`  • Default Mode: ${config.analysis?.defaultMode || 'full'}`);
     console.log(`  • Auto Agent: ${config.analysis?.autoDetectAgent ? 'Enabled' : 'Disabled'}`);
+    console.log(`  • Language: ${config.analysis?.language || 'Not set'}${config.analysis?.framework ? ` (${config.analysis.framework})` : ''}`);
+    console.log(`  • Static Analysis: ${config.analysis?.enableStaticAnalysis ? 'Enabled' : 'Disabled'}`);
     console.log(chalk.cyan('\n💡 Next Steps:'));
     console.log('  1. Run: pr-agent analyze');
     console.log('  2. Or: pr-agent analyze --staged');
