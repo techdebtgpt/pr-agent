@@ -12,18 +12,20 @@ PR Agent analyzes your code changes and provides:
 - **Complexity Rating**: A 1-5 scale rating of complexity with file-level breakdown
 - **Actionable Insights**: Specific recommendations based on your codebase
 - **Architecture-Aware Analysis**: Leverages your `.arch-docs` for context-aware reviews
+- **Peer Review Integration**: Validates PRs against linked Jira tickets and acceptance criteria
 - **Static Analysis**: Semgrep integration for security vulnerabilities and code quality issues
 
 ## Features
 
-✨ **Intelligent Agent Mode** - Automatically handles large diffs without chunking  
-🏗️ **Architecture Documentation Integration** - Uses `.arch-docs` for smarter analysis  
-🔬 **Static Analysis Integration** - Semgrep-powered security and code quality scanning  
-🔌 **Multiple AI Providers** - Anthropic Claude, OpenAI GPT, Google Gemini  
-🖥️ **CLI & GitHub Action** - Use locally or in CI/CD pipelines  
-📊 **File-Level Analysis** - Individual risk and complexity scores per file  
-🌐 **Language-Aware** - Supports TypeScript, JavaScript, Python, Java, Go, Rust, and more  
-⚙️ **Configurable** - Customize models, providers, and analysis modes  
+✨ **Intelligent Agent Mode** - Automatically handles large diffs without chunking
+🏗️ **Architecture Documentation Integration** - Uses `.arch-docs` for smarter analysis
+🔬 **Static Analysis Integration** - Semgrep-powered security and code quality scanning
+🔌 **Multiple AI Providers** - Anthropic Claude, OpenAI GPT, Google Gemini, Zhipu AI
+🖥️ **CLI & GitHub Action** - Use locally or in CI/CD pipelines
+📊 **File-Level Analysis** - Individual risk and complexity scores per file
+🎫 **Peer Review Integration** - Validates against Jira tickets and acceptance criteria
+🌐 **Language-Aware** - Supports TypeScript, JavaScript, Python, Java, Go, Rust, and more
+⚙️ **Configurable** - Customize models, providers, and analysis modes
 🎨 **Unified Output Format** - Semgrep and AI findings use consistent formatting, sorted by severity
 
 ## Quick Reference
@@ -59,6 +61,7 @@ pr-agent help                       # Show help
   - [Configuration](#configuration)
 - [Architecture Documentation Integration](#architecture-documentation-integration)
 - [Static Analysis Integration](#static-analysis-integration)
+- [Peer Review Integration](#peer-review-integration)
 - [GitHub Action Usage](#github-action-usage)
 - [Supported AI Models](#supported-ai-models)
 - [Common Use Cases](#common-use-cases)
@@ -75,6 +78,7 @@ Before using PR Agent, you'll need:
    - **Anthropic Claude**: Sign up at [Anthropic Console](https://console.anthropic.com/) (Recommended)
    - **OpenAI GPT**: Get your key from [OpenAI Platform](https://platform.openai.com/)
    - **Google Gemini**: Get your key from [Google AI Studio](https://makersuite.google.com/)
+   - **Zhipu AI**: Get your key from [Zhipu AI Platform](https://open.bigmodel.cn/) (Anthropic-compatible API)
 
 2. **For GitHub Action**: Repository with permissions to add workflows and secrets
 
@@ -173,6 +177,7 @@ pr-agent analyze --complexity
 pr-agent analyze --provider anthropic
 pr-agent analyze --provider openai
 pr-agent analyze --provider google
+pr-agent analyze --provider zhipu
 
 # Use specific model
 pr-agent analyze --provider anthropic --model claude-sonnet-4-5-20250929
@@ -241,7 +246,8 @@ pr-agent config --reset
   "apiKeys": {
     "anthropic": "sk-ant-...",
     "openai": "",
-    "google": ""
+    "google": "",
+    "zhipu": ""
   },
   "analysis": {
     "defaultMode": "full",
@@ -265,6 +271,14 @@ pr-agent config --reset
     "verbose": false,
     "showStrategy": true,
     "showRecommendations": true
+  },
+  "peerReview": {
+    "enabled": false,
+    "provider": "jira",
+    "instanceUrl": "https://your-company.atlassian.net",
+    "email": "your-email@company.com",
+    "apiToken": "your-jira-api-token",
+    "defaultProject": "PROJ"
   }
 }
 ```
@@ -282,6 +296,9 @@ export OPENAI_API_KEY="sk-..."
 
 # Google Gemini
 export GOOGLE_API_KEY="..."
+
+# Zhipu AI
+export ZHIPU_API_KEY="..."
 ```
 
 Add to your `.bashrc`, `.zshrc`, or `.env` file for persistence.
@@ -512,11 +529,150 @@ Key insights from arch-docs integration:
 
 ### Benefits of Arch-Docs Integration
 
-✅ **Context-Aware Analysis** - AI understands your specific architecture  
-✅ **Pattern Enforcement** - Detects violations of documented patterns  
-✅ **Security Alignment** - Checks against your security guidelines  
-✅ **Consistency** - Ensures PRs follow established conventions  
+✅ **Context-Aware Analysis** - AI understands your specific architecture
+✅ **Pattern Enforcement** - Detects violations of documented patterns
+✅ **Security Alignment** - Checks against your security guidelines
+✅ **Consistency** - Ensures PRs follow established conventions
 ✅ **Better Recommendations** - Suggestions aligned with your architecture
+
+## Peer Review Integration
+
+PR Agent can integrate with Jira to provide intelligent peer review analysis that validates your PR against linked tickets and acceptance criteria.
+
+### Overview
+
+When enabled, the peer review feature acts like a **senior developer reviewing your PR**:
+
+- **Extracts ticket references** from PR title, branch name, or commit messages
+- **Fetches ticket details** from Jira (description, acceptance criteria, story points)
+- **Rates ticket quality** to identify poorly-defined requirements
+- **Validates implementation** against derived requirements
+- **Provides verdict** with blockers, warnings, and recommendations
+
+### Setup
+
+1. **Configure Jira credentials** in `.pragent.config.json`:
+
+```json
+{
+  "peerReview": {
+    "enabled": true,
+    "provider": "jira",
+    "instanceUrl": "https://your-company.atlassian.net",
+    "email": "your-email@company.com",
+    "apiToken": "your-jira-api-token",
+    "defaultProject": "PROJ",
+    "analyzeAcceptanceCriteria": true,
+    "rateTicketQuality": true,
+    "checkScopeCreep": true
+  }
+}
+```
+
+2. **Get a Jira API Token**:
+   - Go to [Atlassian Account Settings](https://id.atlassian.com/manage-profile/security/api-tokens)
+   - Click "Create API token"
+   - Copy the token to your config
+
+3. **Reference tickets in your PR**:
+   - PR title: `feat(PROJ-123): Add new feature`
+   - Branch name: `feature/PROJ-123-add-feature`
+   - Commit message: `PROJ-123: implement feature`
+
+### Usage
+
+```bash
+# Run analysis with peer review
+pr-agent analyze
+
+# The peer review runs automatically if enabled in config
+# Or enable it for a single run:
+pr-agent analyze --peer-review
+```
+
+### Example Output
+
+```
+═══════════════════════════════════════════════════════════════
+                    🔍 PEER REVIEW ANALYSIS
+═══════════════════════════════════════════════════════════════
+
+📋 LINKED TICKET
+───────────────────────────────────────────────────────────────
+   Key:    PROJ-123
+   Title:  Add user authentication
+   Type:   STORY
+   Status: In Progress
+   Points: 5
+
+📊 TICKET QUALITY RATING
+───────────────────────────────────────────────────────────────
+   Overall Score: 🟢 85/100 (GOOD)
+
+   Dimension Scores:
+   • Description Clarity:     🟢 ████████░░ 85
+   • Acceptance Criteria:     🟢 █████████░ 90
+   • Testability:             🟡 ███████░░░ 75
+   • Scope Definition:        🟢 ████████░░ 80
+
+✅ REQUIREMENTS VALIDATION
+───────────────────────────────────────────────────────────────
+   Compliance: 🟢 92%
+
+   📊 REQUIREMENT STATUS:
+   ✅ Implement login endpoint with JWT tokens
+   ✅ Add password validation (min 8 chars)
+   🟡 Create logout endpoint
+      └─ Endpoint exists but doesn't invalidate tokens
+   ✅ Store hashed passwords in database
+
+   ❌ COVERAGE GAPS:
+   🟡 [MINOR] Token invalidation not implemented
+      └─ Impact: Users cannot fully logout, tokens remain valid
+
+🎯 PEER REVIEW VERDICT
+───────────────────────────────────────────────────────────────
+   ✅ APPROVED (Confidence: 85%)
+
+   The PR implements the core authentication functionality as specified.
+   Minor gaps in token invalidation should be addressed in a follow-up.
+
+   Scores:
+   • Implementation Completeness: 🟢 ████████░░ 88
+   • Quality Score:               🟢 ████████░░ 82
+
+   💡 RECOMMENDATIONS:
+      • Add token invalidation on logout
+      • Consider adding rate limiting
+      • Add integration tests for auth flow
+
+═══════════════════════════════════════════════════════════════
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable peer review integration |
+| `provider` | string | `"jira"` | Issue tracker provider (currently only Jira) |
+| `instanceUrl` | string | - | Your Jira instance URL |
+| `email` | string | - | Your Jira account email |
+| `apiToken` | string | - | Jira API token |
+| `defaultProject` | string | - | Default project key for ticket extraction |
+| `analyzeAcceptanceCriteria` | boolean | `true` | Validate against acceptance criteria |
+| `rateTicketQuality` | boolean | `true` | Rate ticket definition quality |
+| `generateTestSuggestions` | boolean | `true` | Generate test suggestions |
+| `checkScopeCreep` | boolean | `true` | Detect scope creep in PRs |
+| `includeTicketDetails` | boolean | `true` | Show ticket details in output |
+| `verbose` | boolean | `false` | Enable verbose output |
+
+### Benefits
+
+✅ **Requirement Validation** - Ensures PRs implement what the ticket specifies
+✅ **Quality Gate** - Catches incomplete implementations before review
+✅ **Ticket Quality Feedback** - Identifies poorly-defined requirements
+✅ **Scope Creep Detection** - Flags changes outside ticket scope
+✅ **Senior Developer Perspective** - Catches edge cases and missing behaviors
 
 ## GitHub Action Usage
 
@@ -766,7 +922,11 @@ pr-agent/
 │   │   ├── anthropic.provider.ts
 │   │   ├── openai.provider.ts
 │   │   ├── google.provider.ts
+│   │   ├── zhipu.provider.ts
 │   │   └── factory.ts
+│   ├── issue-tracker/               # Issue tracker integrations
+│   │   ├── jira-mcp-client.ts       # Jira API client
+│   │   └── peer-review-integration.ts
 │   ├── tools/                       # Agent tools
 │   │   ├── pr-analysis-tools.ts
 │   │   └── index.ts
@@ -956,6 +1116,13 @@ Best for: Quick analysis and cost-conscious usage
 - **gemini-ultra** - Most capable Gemini model
 
 Best for: Alternative to Claude/GPT with competitive performance
+
+### Zhipu AI
+
+- **claude-sonnet-4-20250514** - Via Anthropic-compatible API
+- **glm-4** - Zhipu's native model
+
+Best for: Users in China or those preferring Zhipu's platform with Claude-compatible models
 
 ## Common Use Cases
 

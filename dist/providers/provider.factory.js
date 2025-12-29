@@ -1,6 +1,7 @@
 import { AnthropicProvider } from './anthropic.provider.js';
 import { OpenAIProvider } from './openai.provider.js';
 import { GoogleProvider } from './google.provider.js';
+import { ZhipuProvider } from './zhipu.provider.js';
 /**
  * Factory for creating LLM providers
  */
@@ -28,8 +29,11 @@ export class ProviderFactory {
             case 'google':
                 provider = new GoogleProvider(apiKey);
                 break;
+            case 'zhipu':
+                provider = new ZhipuProvider(apiKey);
+                break;
             default:
-                throw new Error(`Unsupported provider: ${providerName}. Supported: anthropic, openai, google`);
+                throw new Error(`Unsupported provider: ${providerName}. Supported: anthropic, openai, google, zhipu`);
         }
         // Cache the provider if no specific API key was provided
         if (!apiKey) {
@@ -81,13 +85,15 @@ export class ProviderFactory {
             return 'anthropic';
         if (normalized === 'gemini')
             return 'google';
+        if (normalized === 'glm' || normalized === 'zhipuai')
+            return 'zhipu';
         return normalized;
     }
     /**
      * Get list of available providers
      */
     static getAvailableProviders() {
-        return ['anthropic', 'openai', 'google'];
+        return ['anthropic', 'openai', 'google', 'zhipu'];
     }
 }
 //# sourceMappingURL=provider.factory.js.map

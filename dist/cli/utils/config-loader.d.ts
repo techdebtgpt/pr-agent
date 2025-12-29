@@ -3,6 +3,7 @@ export interface UserConfig {
         anthropic?: string;
         openai?: string;
         google?: string;
+        zhipu?: string;
     };
     ai?: {
         provider?: string;
@@ -28,6 +29,28 @@ export interface UserConfig {
         verbose?: boolean;
         showStrategy?: boolean;
         showRecommendations?: boolean;
+    };
+    /**
+     * Peer Review configuration - integrates with issue trackers (Jira, etc.)
+     * to validate PRs against tickets and acceptance criteria
+     */
+    peerReview?: {
+        enabled?: boolean;
+        provider?: string;
+        useMcp?: boolean;
+        instanceUrl?: string;
+        email?: string;
+        apiToken?: string;
+        defaultProject?: string;
+        acceptanceCriteriaField?: string;
+        storyPointsField?: string;
+        ticketPatterns?: string[];
+        analyzeAcceptanceCriteria?: boolean;
+        rateTicketQuality?: boolean;
+        generateTestSuggestions?: boolean;
+        checkScopeCreep?: boolean;
+        includeTicketDetails?: boolean;
+        verbose?: boolean;
     };
 }
 /**

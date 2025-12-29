@@ -35,7 +35,7 @@ program
   .option('--staged', 'Analyze staged changes (git diff --staged)')
   .option('--branch <name>', 'Analyze against specific branch')
   .option('--title <text>', 'PR title (auto-detected from git)')
-  .option('--provider <provider>', 'AI provider (anthropic|openai|google)')
+  .option('--provider <provider>', 'AI provider (anthropic|openai|google|zhipu)')
   .option('--model <model>', 'Specific model to use')
   .option('--agent', 'Force intelligent agent (recommended for large diffs)')
   .option('--summary', 'Show summary only')

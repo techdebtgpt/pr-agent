@@ -130,6 +130,7 @@ export function getApiKey(provider, config) {
         anthropic: 'ANTHROPIC_API_KEY',
         openai: 'OPENAI_API_KEY',
         google: 'GOOGLE_API_KEY',
+        zhipu: 'ZHIPU_API_KEY',
     };
     const envVar = envVarMap[provider.toLowerCase()];
     if (envVar) {

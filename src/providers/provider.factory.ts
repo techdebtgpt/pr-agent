@@ -2,9 +2,10 @@ import { ILLMProvider, ProviderConfig } from './provider.interface.js';
 import { AnthropicProvider } from './anthropic.provider.js';
 import { OpenAIProvider } from './openai.provider.js';
 import { GoogleProvider } from './google.provider.js';
+import { ZhipuProvider } from './zhipu.provider.js';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 
-export type SupportedProvider = 'anthropic' | 'openai' | 'google';
+export type SupportedProvider = 'anthropic' | 'openai' | 'google' | 'zhipu';
 
 export interface ProviderOptions {
   provider?: SupportedProvider;
@@ -48,8 +49,11 @@ export class ProviderFactory {
       case 'google':
         provider = new GoogleProvider(apiKey);
         break;
+      case 'zhipu':
+        provider = new ZhipuProvider(apiKey);
+        break;
       default:
-        throw new Error(`Unsupported provider: ${providerName}. Supported: anthropic, openai, google`);
+        throw new Error(`Unsupported provider: ${providerName}. Supported: anthropic, openai, google, zhipu`);
     }
 
     // Cache the provider if no specific API key was provided
@@ -109,6 +113,7 @@ export class ProviderFactory {
     const normalized = name.toLowerCase();
     if (normalized === 'claude') return 'anthropic';
     if (normalized === 'gemini') return 'google';
+    if (normalized === 'glm' || normalized === 'zhipuai') return 'zhipu';
     return normalized;
   }
 
@@ -116,7 +121,7 @@ export class ProviderFactory {
    * Get list of available providers
    */
   public static getAvailableProviders(): SupportedProvider[] {
-    return ['anthropic', 'openai', 'google'];
+    return ['anthropic', 'openai', 'google', 'zhipu'];
   }
 }
 

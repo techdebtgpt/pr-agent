@@ -39,7 +39,7 @@ export function displayHelp() {
     console.log('      4. Fallback to origin/main');
     console.log('      Use --branch to override for a single analysis\n');
     console.log(chalk.dim('    Advanced Options:'));
-    console.log('      --provider <provider>  AI provider: anthropic|openai|google');
+    console.log('      --provider <provider>  AI provider: anthropic|openai|google|zhipu');
     console.log('      --model <model>        Specific model to use');
     console.log('      --title <text>         PR title (auto-detected from git)');
     console.log('      --max-cost <dollars>   Maximum cost limit (default: $5.00)');

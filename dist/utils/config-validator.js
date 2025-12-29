@@ -12,11 +12,12 @@ export const UserConfigSchema = z.object({
         anthropic: z.string().optional(),
         openai: z.string().optional(),
         google: z.string().optional(),
+        zhipu: z.string().optional(),
     })
         .optional(),
     ai: z
         .object({
-        provider: z.enum(['anthropic', 'openai', 'google']).optional(),
+        provider: z.enum(['anthropic', 'openai', 'google', 'zhipu']).optional(),
         model: z.string().optional(),
         temperature: z.number().min(0).max(2).optional(),
         maxTokens: z.number().positive().int().optional(),
@@ -60,6 +61,26 @@ export const UserConfigSchema = z.object({
         verbose: z.boolean().optional(),
         showStrategy: z.boolean().optional(),
         showRecommendations: z.boolean().optional(),
+    })
+        .optional(),
+    peerReview: z
+        .object({
+        enabled: z.boolean().optional(),
+        provider: z.string().optional(),
+        useMcp: z.boolean().optional(),
+        instanceUrl: z.string().url().optional(),
+        email: z.string().email().optional(),
+        apiToken: z.string().optional(),
+        defaultProject: z.string().optional(),
+        acceptanceCriteriaField: z.string().optional(),
+        storyPointsField: z.string().optional(),
+        ticketPatterns: z.array(z.string()).optional(),
+        analyzeAcceptanceCriteria: z.boolean().optional(),
+        rateTicketQuality: z.boolean().optional(),
+        generateTestSuggestions: z.boolean().optional(),
+        checkScopeCreep: z.boolean().optional(),
+        includeTicketDetails: z.boolean().optional(),
+        verbose: z.boolean().optional(),
     })
         .optional(),
 });
