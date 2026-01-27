@@ -1,5 +1,13 @@
 import { Probot } from 'probot';
+import express, { Request, Response, Router } from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { PRAnalyzerAgent } from './agents/pr-analyzer-agent.js';
+import { saveAnalysis, getDashboardStats, getRecentAnalyses } from './db/index.js';
+import { ExecutionMode, type AgentResult } from './types/agent.types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const provider = (process.env.AI_PROVIDER || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
 const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -109,8 +117,52 @@ function formatAnalysisForGitHub(result: any): string {
   return output;
 }
 
-export default (app: Probot) => {
+export default (app: Probot, { getRouter }: { getRouter?: (path?: string) => Router } = {}) => {
   app.log.info('🤖 PR Agent (LangChain) started');
+
+  // Dashboard Routes
+  if (getRouter) {
+    // Determine public path for static assets
+    const finalPublicPath = path.join(__dirname, 'public');
+    
+    const router = getRouter('/dashboard');
+    if (router) {
+      // Serve static files
+      router.use(express.static(finalPublicPath));
+      
+      // API Endpoints
+      router.get('/api/stats', (req: Request, res: Response) => {
+        try {
+          const stats = getDashboardStats();
+          const recent = getRecentAnalyses();
+          res.json({ stats, recent });
+        } catch (error) {
+          app.log.error('Error fetching stats:', error);
+          res.status(500).json({ error: 'Failed to fetch stats' });
+        }
+      });
+
+      router.get('/', (req: Request, res: Response) => {
+        res.sendFile(path.join(finalPublicPath, 'index.html'));
+      });
+      
+      app.log.info('NOTE: Dashboard available at /dashboard');
+    }
+
+    // Handle root path
+    const rootRouter = getRouter();
+    if (rootRouter) {
+        // Serve static files at root
+        rootRouter.use(express.static(finalPublicPath));
+
+        // Serve index.html at root
+        rootRouter.get('/', (req: Request, res: Response) => {
+            res.sendFile(path.join(finalPublicPath, 'index.html'));
+        });
+        
+        app.log.info('Dashboard configured at root /');
+    }
+  }
 
   app.on(['pull_request.opened', 'pull_request.synchronize'], async (context) => {
     const { pull_request: pr, repository } = context.payload;
@@ -128,11 +180,45 @@ export default (app: Probot) => {
       // Use LangChain agent for intelligent analysis
       app.log.info(`Running LangChain agent analysis with ${provider}...`);
       const agent = new PRAnalyzerAgent({
+        mode: ExecutionMode.EXECUTE,  // Probot always executes with API key
         provider: provider as any,
         apiKey,
         model,
       });
-      const result = await agent.analyze(diff, pr.title);
+      const analysisResult = await agent.analyze(diff, pr.title);
+
+      // Type guard: Probot always uses EXECUTE mode
+      if (analysisResult.mode === 'prompt_only') {
+        throw new Error('Unexpected prompt-only result in Probot EXECUTE mode');
+      }
+      const result = analysisResult as AgentResult;
+
+      // Save to Database
+      try {
+        // Calculate overall complexity from file analyses
+        let overallComplexity = 1;
+        if (result.fileAnalyses && result.fileAnalyses.size > 0) {
+          const complexities = Array.from(result.fileAnalyses.values()).map((f: any) => f.complexity || 1);
+          overallComplexity = Math.round(complexities.reduce((a: number, b: number) => a + b, 0) / complexities.length);
+        }
+
+        // Get risks from fixes with critical/warning severity
+        const risks = result.fixes?.filter((f: any) => f.severity === 'critical' || f.severity === 'warning').map((f: any) => f.comment) || [];
+
+        saveAnalysis({
+          pr_number: pr.number,
+          repo_owner: repository.owner.login,
+          repo_name: repository.name,
+          author: pr.user.login,
+          title: pr.title,
+          complexity: overallComplexity,
+          risks_count: risks.length,
+          risks: JSON.stringify(risks),
+          recommendations: JSON.stringify(result.recommendations || [])
+        });
+      } catch (dbError) {
+        app.log.error('Failed to save analysis to DB:', dbError);
+      }
 
       // Format the analysis for GitHub comment
       const summary = formatAnalysisForGitHub(result);

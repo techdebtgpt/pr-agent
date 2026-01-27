@@ -1,27 +1,45 @@
 # PR Analyzer Configuration
-# This file configures the AI-powered PR analysis
+# This file documents available configuration options for the PR Analyzer
+# GitHub Action reads from environment variables, CLI uses .pragent.config.json
 
 # Analysis settings
 analysis:
   # Maximum complexity level to flag (1-5)
   max_complexity: 4
-  
+
   # Whether to include potential risks in analysis
   include_risks: true
-  
+
   # Whether to include complexity rating
   include_complexity: true
 
 # AI model settings
 ai:
   # Model to use for analysis
-  model: "claude-3-5-sonnet-20241022"
-  
+  model: "claude-sonnet-4-5-20250929"
+
   # Maximum tokens for response
-  max_tokens: 1500
-  
+  max_tokens: 50000
+
   # Temperature for creativity (0.0-1.0)
   temperature: 0.2
+
+# Peer Review settings (CLI only - requires .pragent.config.json)
+peerReview:
+  # Enable peer review against Jira tickets
+  enabled: false
+
+  # Analyze acceptance criteria compliance
+  analyzeAcceptanceCriteria: true
+
+  # Rate ticket quality (completeness, clarity)
+  rateTicketQuality: true
+
+  # Generate test suggestions based on AC
+  generateTestSuggestions: true
+
+  # Check for scope creep (changes outside ticket scope)
+  checkScopeCreep: true
 
 # File patterns to include/exclude
 files:
@@ -35,7 +53,11 @@ files:
     - "**/*.java"
     - "**/*.go"
     - "**/*.rs"
-  
+    - "**/*.cs"
+    - "**/*.cpp"
+    - "**/*.c"
+    - "**/*.h"
+
   # Exclude these file patterns
   exclude:
     - "**/*.test.*"

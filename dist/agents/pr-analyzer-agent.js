@@ -3,6 +3,7 @@
  * LangChain-based agent for intelligent PR analysis
  */
 import { BasePRAgentWorkflow } from './base-pr-agent-workflow.js';
+import { ExecutionMode } from '../types/agent.types.js';
 import { parseDiff } from '../tools/pr-analysis-tools.js';
 import { ProviderFactory } from '../providers/index.js';
 import { parseAllArchDocs, archDocsExists } from '../utils/arch-docs-parser.js';
@@ -12,14 +13,27 @@ import { buildArchDocsContext } from '../utils/arch-docs-rag.js';
  */
 export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     constructor(options = {}) {
-        const model = ProviderFactory.createChatModel({
-            provider: options.provider || 'anthropic',
-            apiKey: options.apiKey,
-            model: options.model,
-            temperature: options.temperature ?? 0.2,
-            maxTokens: options.maxTokens ?? 4000,
-        });
-        super(model);
+        // Determine execution mode
+        const mode = options.mode || ExecutionMode.EXECUTE;
+        let model;
+        // Only create model in EXECUTE mode
+        if (mode === ExecutionMode.EXECUTE) {
+            // If a pre-configured BaseChatModel is passed (MCP case), use it directly
+            if (options.chatModel) {
+                model = options.chatModel;
+            }
+            else {
+                // Otherwise create model via ProviderFactory (CLI/Action case - backward compatible)
+                model = ProviderFactory.createChatModel({
+                    provider: options.provider || 'anthropic',
+                    apiKey: options.apiKey,
+                    model: options.model,
+                    temperature: options.temperature ?? 0.2,
+                    maxTokens: options.maxTokens ?? 50000,
+                });
+            }
+        }
+        super(mode, model);
     }
     /**
      * Get agent metadata
@@ -40,6 +54,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     }
     /**
      * Analyze a PR with full agent workflow
+     * Returns either executed results (EXECUTE mode) or prompts (PROMPT_ONLY mode)
      */
     async analyze(diff, title, mode, options) {
         // Parse diff into files
@@ -59,6 +74,11 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
             maxCost: 5.0,
             mode: mode || { summary: true, risks: true, complexity: true },
             archDocs: archDocsContext,
+            config: {
+                repoPath: options?.repoPath,
+                repoOwner: options?.repoOwner,
+                repoName: options?.repoName,
+            },
             language: options?.language,
             framework: options?.framework,
             enableStaticAnalysis: options?.enableStaticAnalysis !== false, // Default to true

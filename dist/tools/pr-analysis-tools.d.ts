@@ -15,52 +15,76 @@ export declare function parseDiff(diff: string): DiffFile[];
 export declare function createFileAnalyzerTool(): DynamicStructuredTool<z.ZodObject<{
     filePath: z.ZodString;
     diffContent: z.ZodString;
-}, z.core.$strip>, {
+}, "strip", z.ZodTypeAny, {
     filePath: string;
     diffContent: string;
 }, {
     filePath: string;
     diffContent: string;
-}, string>;
+}>, {
+    filePath: string;
+    diffContent: string;
+}, {
+    filePath: string;
+    diffContent: string;
+}, string, "analyze_file">;
 /**
  * Create risk detector tool
  */
 export declare function createRiskDetectorTool(): DynamicStructuredTool<z.ZodObject<{
     diff: z.ZodString;
     context: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>, {
+}, "strip", z.ZodTypeAny, {
     diff: string;
     context?: string | undefined;
 }, {
     diff: string;
     context?: string | undefined;
-}, string>;
+}>, {
+    diff: string;
+    context?: string | undefined;
+}, {
+    diff: string;
+    context?: string | undefined;
+}, string, "detect_risks">;
 /**
  * Create complexity scorer tool
  */
 export declare function createComplexityScorerTool(): DynamicStructuredTool<z.ZodObject<{
-    filesAnalyzed: z.ZodArray<z.ZodAny>;
+    filesAnalyzed: z.ZodArray<z.ZodAny, "many">;
     totalChanges: z.ZodNumber;
-}, z.core.$strip>, {
+}, "strip", z.ZodTypeAny, {
     filesAnalyzed: any[];
     totalChanges: number;
 }, {
     filesAnalyzed: any[];
     totalChanges: number;
-}, string>;
+}>, {
+    filesAnalyzed: any[];
+    totalChanges: number;
+}, {
+    filesAnalyzed: any[];
+    totalChanges: number;
+}, string, "score_complexity">;
 /**
  * Create summary generator tool
  */
 export declare function createSummaryGeneratorTool(): DynamicStructuredTool<z.ZodObject<{
-    files: z.ZodArray<z.ZodAny>;
+    files: z.ZodArray<z.ZodAny, "many">;
     title: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>, {
+}, "strip", z.ZodTypeAny, {
     files: any[];
     title?: string | undefined;
 }, {
     files: any[];
     title?: string | undefined;
-}, string>;
+}>, {
+    files: any[];
+    title?: string | undefined;
+}, {
+    files: any[];
+    title?: string | undefined;
+}, string, "generate_summary">;
 /**
  * Create code suggestion tool for fixing issues based on reviewer comments
  */
@@ -70,16 +94,28 @@ export declare function createCodeSuggestionTool(): DynamicStructuredTool<z.ZodO
     filePath: z.ZodString;
     prTitle: z.ZodOptional<z.ZodString>;
     prContext: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>, {
+}, "strip", z.ZodTypeAny, {
+    filePath: string;
     reviewerComment: string;
     codeSnippet: string;
-    filePath: string;
     prTitle?: string | undefined;
     prContext?: string | undefined;
 }, {
+    filePath: string;
     reviewerComment: string;
     codeSnippet: string;
-    filePath: string;
     prTitle?: string | undefined;
     prContext?: string | undefined;
-}, string>;
+}>, {
+    filePath: string;
+    reviewerComment: string;
+    codeSnippet: string;
+    prTitle?: string | undefined;
+    prContext?: string | undefined;
+}, {
+    filePath: string;
+    reviewerComment: string;
+    codeSnippet: string;
+    prTitle?: string | undefined;
+    prContext?: string | undefined;
+}, string, "suggest_code_fix">;

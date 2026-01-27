@@ -1,0 +1,31 @@
+{
+  "$comment": "MCP Server Configuration for PR Agent (CLI Tool + MCP Server)",
+  "$comment2": "PR Agent is primarily a CLI tool for PR analysis that also exposes MCP server functionality",
+  "$comment3": "The MCP server (src/mcp/) imports and reuses the CLI's core analysis engine",
+  "$comment4": "After 'npm install && npm run build', the server provides these tools:",
+  "$comment5": "  - analyze: Parse git diff, detect risks, calculate complexity, extract Jira tickets",
+  "$comment6": "  - dashboard: Start web dashboard for viewing analysis history and metrics",
+  "$comment7": "",
+  "$comment8": "For full Jira integration, also install @modelcontextprotocol/server-atlassian",
+  "$comment9": "For GitHub integration, also install @modelcontextprotocol/server-github",
+  "servers": {
+    "pr-agent": {
+      "type": "stdio",
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "cwd": "${workspaceFolder}",
+      "description": "PR Agent MCP Server - AI-powered PR analysis (analyze, dashboard)"
+    },
+    "atlassian": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/mcp",
+      "description": "Official Atlassian Rovo MCP Server - Jira and Confluence Cloud access via OAuth"
+    },
+    "github": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-github"],
+      "description": "GitHub MCP Server - Repository and PR management"
+    }
+  }
+}

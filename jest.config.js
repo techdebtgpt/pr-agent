@@ -1,5 +1,5 @@
 export default {
-  preset: 'ts-jest',
+  preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
@@ -8,9 +8,11 @@ export default {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: true,
-      isolatedModules: true,
-      diagnostics: {
-        ignoreCodes: [151002],
+      tsconfig: {
+        module: 'nodenext',
+        moduleResolution: 'nodenext',
+        target: 'ES2022',
+        esModuleInterop: true,
       },
     }],
   },

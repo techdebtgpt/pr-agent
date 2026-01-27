@@ -43,6 +43,42 @@ export interface AnalysisMode {
     risks: boolean;
     complexity: boolean;
 }
+/**
+ * Execution mode for LLM-agnostic operation
+ */
+export declare enum ExecutionMode {
+    EXECUTE = "execute",// CLI: Execute prompts with API key
+    PROMPT_ONLY = "prompt_only"
+}
+/**
+ * Individual analysis prompt for PROMPT_ONLY mode
+ * Supports both main PR analysis and peer review prompts
+ */
+export interface AnalysisPrompt {
+    step: 'fileAnalysis' | 'riskDetection' | 'summaryGeneration' | 'selfRefinement' | 'ticketQuality' | 'acValidation' | 'peerReview';
+    prompt: string;
+    context?: Record<string, any>;
+    instructions: string;
+    schema?: any;
+    formatInstructions?: string;
+    inputs?: Record<string, unknown>;
+}
+/**
+ * Result when in PROMPT_ONLY mode - returns prompts instead of executing them
+ * Also includes static analysis results that don't require an LLM
+ */
+export interface PromptOnlyResult {
+    mode: 'prompt_only';
+    context: AgentContext;
+    prompts: AnalysisPrompt[];
+    instructions: string;
+    staticAnalysis?: {
+        testSuggestions?: TestSuggestion[];
+        devOpsCostEstimates?: DevOpsCostEstimate[];
+        coverageReport?: CoverageReport;
+        projectClassification?: string;
+    };
+}
 export interface RiskItem {
     description: string;
     archDocsReference?: {
@@ -50,6 +86,59 @@ export interface RiskItem {
         excerpt: string;
         reason: string;
     };
+}
+/**
+ * Code suggestion for fixing issues found during review
+ */
+export interface CodeSuggestion {
+    filePath: string;
+    lineRange: {
+        start: number;
+        end: number;
+    };
+    originalCode: string;
+    suggestedCode: string;
+    reason: string;
+}
+/**
+ * Test suggestion for code without tests
+ */
+export interface TestSuggestion {
+    forFile: string;
+    testFramework: 'jest' | 'mocha' | 'vitest' | 'pytest' | 'unittest' | 'other';
+    testCode: string;
+    description: string;
+    testFilePath?: string;
+    isEnhancement?: boolean;
+    existingTestFile?: string;
+}
+/**
+ * DevOps cost estimate for infrastructure changes
+ */
+export interface DevOpsCostEstimate {
+    resource: string;
+    resourceType: string;
+    currentMonthlyCost?: number;
+    estimatedNewCost: number;
+    difference?: number;
+    confidence: 'high' | 'medium' | 'low';
+    details?: string;
+}
+/**
+ * Test coverage report
+ */
+export interface CoverageReport {
+    available: boolean;
+    overallPercentage?: number;
+    lineCoverage?: number;
+    branchCoverage?: number;
+    fileBreakdown?: Array<{
+        file: string;
+        lineCoverage: number;
+        branchCoverage?: number;
+    }>;
+    delta?: number;
+    coverageTool?: string;
 }
 export interface FileAnalysis {
     path: string;
@@ -61,6 +150,7 @@ export interface FileAnalysis {
         deletions: number;
     };
     recommendations: string[];
+    suggestedChanges?: CodeSuggestion[];
 }
 export interface Fix {
     file: string;
@@ -81,6 +171,8 @@ export interface AgentResult {
     totalTokensUsed: number;
     executionTime: number;
     mode: AnalysisMode;
+    overallComplexity?: number;
+    overallRisks?: string[];
     archDocsImpact?: {
         used: boolean;
         docsAvailable: number;
@@ -95,7 +187,15 @@ export interface AgentResult {
         warningCount: number;
         criticalIssues: string[];
     };
+    testSuggestions?: TestSuggestion[];
+    devOpsCostEstimates?: DevOpsCostEstimate[];
+    coverageReport?: CoverageReport;
+    projectClassification?: string;
 }
+/**
+ * Union type for agent results - either executed results or prompts to execute
+ */
+export type AgentResultOrPrompts = AgentResult | PromptOnlyResult;
 export type AgentAnalysisResult = AgentResult;
 export interface AgentMetadata {
     name: string;

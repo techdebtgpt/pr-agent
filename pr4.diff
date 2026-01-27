@@ -1,0 +1,384 @@
+diff --git a/.github/workflows/pr-analyzer.yml b/.github/workflows/pr-analyzer.yml
+new file mode 100644
+index 0000000..7d3d208
+--- /dev/null
++++ b/.github/workflows/pr-analyzer.yml
+@@ -0,0 +1,30 @@
++name: PR Analyzer
++
++on:
++  pull_request:
++    types: [opened, synchronize, reopened]
++
++permissions:
++  pull-requests: write
++  issues: write
++  contents: read
++
++jobs:
++  analyze:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Run PR Analyzer
++        uses: techdebtgpt/pr-agent@v1.1
++        with:
++          config-path: .pr-analyzer.yml
++        env:
++          # Using Anthropic Claude for AI analysis
++          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
++
++          # Optional: Specify provider and model
++          AI_PROVIDER: anthropic
++          AI_MODEL: claude-sonnet-4-5-20250929
++
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/ClientApp/src/components/Task.jsx b/ClientApp/src/components/Task.jsx
+index ceb3d06..0168842 100644
+--- a/ClientApp/src/components/Task.jsx
++++ b/ClientApp/src/components/Task.jsx
+@@ -1,19 +1,99 @@
++import { useState } from 'react';
+ import { connect } from 'react-redux';
+-import { Button } from 'react-bootstrap';
+-import { deleteTask } from '../features/taskList/actions';
+-
+-const TaskRaw = (props) => (
+-  <tr>
+-    <td>{props.data.id}</td>
+-    <td>{props.data.description}</td>
+-    <td>
+-      <Button variant="danger" onClick={() => props.deleteTask(props.data.id)}>
+-        Delete
+-      </Button>
+-    </td>
+-  </tr>
+-);
+-
+-const actionCreators = { deleteTask };
++import { Button, Badge, Form } from 'react-bootstrap';
++import { deleteTask, setDueDate } from '../features/taskList/actions';
++
++const getDueDateStatus = (dueDate) => {
++  if (!dueDate) return null;
++  const now = new Date();
++  const due = new Date(dueDate);
++  const hoursUntilDue = (due - now) / (1000 * 60 * 60);
++
++  if (hoursUntilDue < 0) return 'overdue';
++  if (hoursUntilDue <= 24) return 'warning';
++  return 'normal';
++};
++
++const formatDate = (dateString) => {
++  if (!dateString) return '';
++  const date = new Date(dateString);
++  return date.toLocaleDateString('en-US', {
++    month: 'short',
++    day: 'numeric',
++    year: 'numeric',
++  });
++};
++
++const TaskRaw = (props) => {
++  const [showDatePicker, setShowDatePicker] = useState(false);
++  const dueDateStatus = getDueDateStatus(props.data.dueDate);
++
++  const handleDateChange = (e) => {
++    const newDate = e.target.value ? new Date(e.target.value).toISOString() : null;
++    props.setDueDate(props.data.id, newDate);
++    setShowDatePicker(false);
++  };
++
++  const getBadgeVariant = () => {
++    switch (dueDateStatus) {
++      case 'overdue':
++        return 'danger';
++      case 'warning':
++        return 'warning';
++      default:
++        return 'secondary';
++    }
++  };
++
++  const getRowStyle = () => {
++    if (dueDateStatus === 'overdue') {
++      return { backgroundColor: '#ffebee' };
++    }
++    return {};
++  };
++
++  return (
++    <tr style={getRowStyle()}>
++      <td>{props.data.id}</td>
++      <td>{props.data.description}</td>
++      <td>
++        {props.data.dueDate ? (
++          <Badge bg={getBadgeVariant()} className="me-2">
++            {dueDateStatus === 'overdue' && '⚠️ '}
++            {dueDateStatus === 'warning' && '⏰ '}
++            {formatDate(props.data.dueDate)}
++          </Badge>
++        ) : (
++          <span className="text-muted">No due date</span>
++        )}
++        {showDatePicker ? (
++          <Form.Control
++            type="date"
++            size="sm"
++            style={{ width: '150px', display: 'inline-block' }}
++            onChange={handleDateChange}
++            onBlur={() => setShowDatePicker(false)}
++            autoFocus
++          />
++        ) : (
++          <Button
++            variant="outline-secondary"
++            size="sm"
++            onClick={() => setShowDatePicker(true)}
++          >
++            📅
++          </Button>
++        )}
++      </td>
++      <td>
++        <Button variant="danger" onClick={() => props.deleteTask(props.data.id)}>
++          Delete
++        </Button>
++      </td>
++    </tr>
++  );
++};
++
++const actionCreators = { deleteTask, setDueDate };
+ 
+ export const Task = connect(null, actionCreators)(TaskRaw);
+diff --git a/ClientApp/src/components/TaskList.jsx b/ClientApp/src/components/TaskList.jsx
+index 2ca3430..f488c8e 100644
+--- a/ClientApp/src/components/TaskList.jsx
++++ b/ClientApp/src/components/TaskList.jsx
+@@ -47,7 +47,8 @@ class TaskListRaw extends Component {
+             <tr>
+               <th>ID</th>
+               <th>Description</th>
+-              <th>#</th>
++              <th>Due Date</th>
++              <th>Actions</th>
+             </tr>
+           </thead>
+           <tbody>
+diff --git a/ClientApp/src/features/taskList/actionTypes.js b/ClientApp/src/features/taskList/actionTypes.js
+index eed30ef..3cdfba7 100644
+--- a/ClientApp/src/features/taskList/actionTypes.js
++++ b/ClientApp/src/features/taskList/actionTypes.js
+@@ -14,3 +14,8 @@ export const DELETE_TASK = 'taskList.DELETE_TASK';
+ export const DELETE_TASK_STARTED = 'taskList.DELETE_TASK_STARTED';
+ export const DELETE_TASK_SUCCESS = 'taskList.DELETE_TASK_SUCCESS';
+ export const DELETE_TASK_FAILURE = 'taskList.DELETE_TASK_FAILURE';
++
++export const SET_DUE_DATE = 'taskList.SET_DUE_DATE';
++export const SET_DUE_DATE_STARTED = 'taskList.SET_DUE_DATE_STARTED';
++export const SET_DUE_DATE_SUCCESS = 'taskList.SET_DUE_DATE_SUCCESS';
++export const SET_DUE_DATE_FAILURE = 'taskList.SET_DUE_DATE_FAILURE';
+diff --git a/ClientApp/src/features/taskList/actions.js b/ClientApp/src/features/taskList/actions.js
+index 7d2816b..9e91771 100644
+--- a/ClientApp/src/features/taskList/actions.js
++++ b/ClientApp/src/features/taskList/actions.js
+@@ -94,3 +94,34 @@ export function deleteTaskFailure(error) {
+     error,
+   };
+ }
++
++// SET DUE DATE
++
++export function setDueDate(taskId, dueDate) {
++  return {
++    type: types.SET_DUE_DATE,
++    taskId,
++    dueDate,
++  };
++}
++
++export function setDueDateStarted(taskId) {
++  return {
++    type: types.SET_DUE_DATE_STARTED,
++    taskId,
++  };
++}
++
++export function setDueDateSuccess(task) {
++  return {
++    type: types.SET_DUE_DATE_SUCCESS,
++    task,
++  };
++}
++
++export function setDueDateFailure(error) {
++  return {
++    type: types.SET_DUE_DATE_FAILURE,
++    error,
++  };
++}
+diff --git a/ClientApp/src/features/taskList/reducer.js b/ClientApp/src/features/taskList/reducer.js
+index 65ae758..4bdc878 100644
+--- a/ClientApp/src/features/taskList/reducer.js
++++ b/ClientApp/src/features/taskList/reducer.js
+@@ -61,6 +61,24 @@ export const reducer = (srcState, action) => {
+         refreshInProgress: false,
+         error: action.error.message,
+       };
++    // SET DUE DATE
++    case actionTypes.SET_DUE_DATE_STARTED:
++      return { ...state, refreshInProgress: true, error: null };
++    case actionTypes.SET_DUE_DATE_SUCCESS:
++      return {
++        ...state,
++        refreshInProgress: false,
++        error: null,
++        tasks: state.tasks.map((item) =>
++          item.id === action.task.id ? { ...item, dueDate: action.task.dueDate } : item
++        ),
++      };
++    case actionTypes.SET_DUE_DATE_FAILURE:
++      return {
++        ...state,
++        refreshInProgress: false,
++        error: action.error.message,
++      };
+     default:
+       return state;
+   }
+diff --git a/ClientApp/src/features/taskList/sagas.js b/ClientApp/src/features/taskList/sagas.js
+index ef31a45..94aad10 100644
+--- a/ClientApp/src/features/taskList/sagas.js
++++ b/ClientApp/src/features/taskList/sagas.js
+@@ -51,14 +51,31 @@ function* watchDeleteTask() {
+   yield takeEvery(types.DELETE_TASK, deleteTaskAsync);
+ }
+ 
++function* setDueDateAsync(action) {
++  const { taskId, dueDate } = action;
++  yield put(actions.setDueDateStarted(taskId));
++  try {
++    const task = yield call(tasksService.setDueDateAsync, taskId, dueDate);
++    yield put(actions.setDueDateSuccess(task));
++  } catch (error) {
++    yield put(actions.setDueDateFailure(error));
++  }
++}
++
++function* watchSetDueDate() {
++  yield takeEvery(types.SET_DUE_DATE, setDueDateAsync);
++}
++
+ export {
+   getTasksAsync,
+   addTaskAsync,
+   deleteTaskAsync,
++  setDueDateAsync,
+ };
+ 
+ export const taskListWatcherSagas = [
+   watchGetTasks,
+   watchAddTask,
+   watchDeleteTask,
++  watchSetDueDate,
+ ];
+diff --git a/ClientApp/src/services/TasksService.js b/ClientApp/src/services/TasksService.js
+index 91827a8..6c72140 100644
+--- a/ClientApp/src/services/TasksService.js
++++ b/ClientApp/src/services/TasksService.js
+@@ -51,6 +51,24 @@ class TasksService {
+       );
+     }
+   }
++
++  async setDueDateAsync(taskId, dueDate) {
++    const url = `${ENDPOINT}/${taskId}/duedate`;
++    const response = await fetch(url, {
++      method: 'PUT',
++      headers: {
++        Accept: 'application/json',
++        'Content-Type': 'application/json',
++      },
++      body: JSON.stringify({ dueDate }),
++    });
++    if (!response.ok) {
++      throw new Error(
++        `TasksService.setDueDateAsync failed, HTTP status ${response.status}`,
++      );
++    }
++    return await response.json();
++  }
+ }
+ 
+ export const tasksService = new TasksService();
+diff --git a/ReactReduxTodo/Controllers/TasksController.cs b/ReactReduxTodo/Controllers/TasksController.cs
+index 10884bc..8cde3f0 100644
+--- a/ReactReduxTodo/Controllers/TasksController.cs
++++ b/ReactReduxTodo/Controllers/TasksController.cs
+@@ -65,4 +65,19 @@ public async Task<ActionResult<TodoTaskDeleteResult>> Delete(int id)
+         }
+         return result;
+     }
+-}
+\ No newline at end of file
++
++    [HttpPut("{id}/duedate")]
++    [ProducesResponseType(typeof(TodoTask), StatusCodes.Status200OK)]
++    [ProducesResponseType(typeof(ApiErrorResult), StatusCodes.Status404NotFound)]
++    public async Task<ActionResult<TodoTask>> SetDueDate(int id, [FromBody] SetDueDateRequest request)
++    {
++        var task = await _todoTasksService.SetDueDateAsync(id, request.DueDate);
++        if (task == null)
++        {
++            return NotFound(new ApiErrorResult(StatusCodes.Status404NotFound, "Not found", $"Entity {id} not found"));
++        }
++        return task;
++    }
++}
++
++public record SetDueDateRequest(DateTime? DueDate);
+\ No newline at end of file
+diff --git a/ReactReduxTodo/Entities/TodoTask.cs b/ReactReduxTodo/Entities/TodoTask.cs
+index 27d4855..a6dc82b 100644
+--- a/ReactReduxTodo/Entities/TodoTask.cs
++++ b/ReactReduxTodo/Entities/TodoTask.cs
+@@ -4,4 +4,5 @@ public class TodoTask
+ {
+     public int Id { get; set; }
+     public string? Description { get; set; }
++    public DateTime? DueDate { get; set; }
+ }
+\ No newline at end of file
+diff --git a/ReactReduxTodo/Services/TodoTasksService.cs b/ReactReduxTodo/Services/TodoTasksService.cs
+index 74a122b..a7cb4b3 100644
+--- a/ReactReduxTodo/Services/TodoTasksService.cs
++++ b/ReactReduxTodo/Services/TodoTasksService.cs
+@@ -40,7 +40,19 @@ public async Task<bool> DeleteAsync(int id)
+         var rowsDeleted = await _applicationDbContext.TodoTasks
+             .Where(t => t.Id == id)
+             .ExecuteDeleteAsync();
+-        
++
+         return rowsDeleted > 0;
+     }
++
++    public async Task<TodoTask?> SetDueDateAsync(int id, DateTime? dueDate)
++    {
++        var rowsUpdated = await _applicationDbContext.TodoTasks
++            .Where(t => t.Id == id)
++            .ExecuteUpdateAsync(s => s.SetProperty(t => t.DueDate, dueDate));
++
++        if (rowsUpdated == 0)
++            return null;
++
++        return await GetAsync(id);
++    }
+ }
+\ No newline at end of file
+diff --git a/pr-agent.db b/pr-agent.db
+new file mode 100644
+index 0000000..0c92aab
+Binary files /dev/null and b/pr-agent.db differ

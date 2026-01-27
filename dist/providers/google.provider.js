@@ -22,7 +22,7 @@ export class GoogleProvider {
             apiKey: this.apiKey,
             model: config.model || this.getDefaultModel(),
             temperature: config.temperature ?? 0.2,
-            maxOutputTokens: config.maxTokens ?? 4000,
+            maxOutputTokens: config.maxTokens ?? 50000,
         });
     }
 }

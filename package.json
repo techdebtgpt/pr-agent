@@ -1,29 +1,56 @@
 {
   "name": "pr-agent",
   "version": "0.1.0",
-  "description": "Simple AI GitHub PR analyzer",
+  "description": "AI-powered pull request analyzer - CLI, GitHub Action, and MCP server for code review automation",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "pr-agent": "./dist/cli/index.js"
+    "pr-agent": "./dist/cli/index.js",
+    "pr-agent-mcp": "./dist/mcp/server.js"
   },
+  "mcpName": "io.github.techdebtgpt/pr-agent",
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "server.json",
+    "smithery.json"
   ],
+  "keywords": [
+    "pr",
+    "pull-request",
+    "code-review",
+    "git",
+    "github",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "analysis",
+    "security",
+    "jira"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/techdebtgpt/pr-agent.git"
+  },
+  "homepage": "https://github.com/techdebtgpt/pr-agent#readme",
+  "bugs": {
+    "url": "https://github.com/techdebtgpt/pr-agent/issues"
+  },
   "scripts": {
-    "build": "npm run build:tsc && npm run build:action",
+    "build": "npm run build:tsc && cp -R src/public dist/public && npm run build:action",
     "build:clean": "rimraf dist && npm run build",
     "build:tsc": "tsc",
     "build:action": "node -e \"try{require('fs').unlinkSync('dist/index.js')}catch(e){}\" && node -e \"try{require('fs').unlinkSync('dist/index.js.map')}catch(e){}\" && node -e \"try{require('fs').unlinkSync('dist/index.d.ts')}catch(e){}\" && ncc build src/action.ts -o dist --no-source-map-register",
     "build:probot": "npm run build:tsc",
     "package": "npm run build",
     "prepublishOnly": "npm run build",
-    "dev": "tsx src/index.ts",
+    "dev": "probot run ./src/index.ts",
     "dev:action": "tsx src/action.ts",
-    "start": "node ./dist/index.js",
+    "start": "probot run ./dist/index.js",
     "cli": "node dist/cli/index.js",
+    "mcp": "node dist/mcp/server.js",
+    "mcp:setup": "node scripts/setup-mcp-local.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
@@ -37,23 +64,29 @@
     "@langchain/google-genai": "^2.0.0",
     "@langchain/langgraph": "^1.0.2",
     "@langchain/openai": "^1.1.3",
+    "@modelcontextprotocol/sdk": "^1.25.2",
     "@octokit/rest": "^22.0.1",
+    "better-sqlite3": "^12.5.0",
     "chalk": "^4.1.2",
     "commander": "^14.0.2",
     "inquirer": "^12.10.0",
     "langchain": "^1.1.1",
+    "open": "^11.0.0",
     "ora": "^9.0.0",
-    "probot": "^12.3.1"
+    "probot": "^12.3.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/jest": "^29.5.12",
     "@types/node": "^24.7.1",
     "@vercel/ncc": "^0.38.4",
     "jest": "^29.7.0",
+    "nyc": "^17.1.0",
     "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
     "tsx": "^4.0.0",
-    "typescript": "^5.2.2",
-    "zod": "^4.1.13"
+    "typescript": "^5.2.2"
   },
   "engines": {
     "node": ">=18.0.0"

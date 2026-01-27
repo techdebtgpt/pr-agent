@@ -2,12 +2,26 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import chalk from 'chalk';
 import ora from 'ora';
+import open from 'open';
 import { PRAnalyzerAgent } from '../../agents/pr-analyzer-agent.js';
 import { loadUserConfig, getApiKey } from '../utils/config-loader.js';
 import { archDocsExists } from '../../utils/arch-docs-parser.js';
 import { resolveDefaultBranch } from '../../utils/branch-resolver.js';
 import { ConfigurationError, GitHubAPIError, GitError } from '../../utils/errors.js';
+
+import {
+  createPeerReviewIntegration,
+  formatPeerReviewOutput,
+  PeerReviewMode,
+  type PeerReviewResult,
+} from '../../issue-tracker/index.js';
+import { ExecutionMode, type AgentResult } from '../../types/agent.types.js';
+import { ProviderFactory, type SupportedProvider } from '../../providers/index.js';
 import { Fix } from '../../types/agent.types.js';
+
+import { saveAnalysis } from '../../db/index.js';
+import { getCoverageAnalysis, formatCoverageAnalysis, runEslintAnalysis, formatStaticAnalysis } from '../../tools/index.js';
+
 
 interface AnalyzeOptions {
   diff?: string;
@@ -25,6 +39,11 @@ interface AnalyzeOptions {
   verbose?: boolean;
   maxCost?: number;
   archDocs?: boolean;
+  peerReview?: boolean; // Enable Jira peer review integration
+  showClassification?: boolean; // Show project type classification
+  scanCoverage?: boolean; // Run coverage analysis and suggest tests
+  showCoverage?: boolean; // Display coverage metrics
+  showStaticAnalysis?: boolean; // Run and show ESLint static analysis
 }
 
 interface AnalysisMode {
@@ -217,6 +236,59 @@ async function getPRTitle(): Promise<string | undefined> {
 }
 
 /**
+ * Get repository info from git remote URL
+ */
+function getRepoInfo(): { owner: string; name: string } {
+  try {
+    const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
+    // Handle SSH format: git@github.com:owner/repo.git
+    // Handle HTTPS format: https://github.com/owner/repo.git
+    const sshMatch = remoteUrl.match(/git@[^:]+:([^/]+)\/(.+?)(?:\.git)?$/);
+    if (sshMatch) {
+      return { owner: sshMatch[1], name: sshMatch[2] };
+    }
+    const httpsMatch = remoteUrl.match(/https?:\/\/[^/]+\/([^/]+)\/(.+?)(?:\.git)?$/);
+    if (httpsMatch) {
+      return { owner: httpsMatch[1], name: httpsMatch[2] };
+    }
+    // Fallback to current directory name
+    return { owner: 'local', name: process.cwd().split(/[\\/]/).pop() || 'unknown' };
+  } catch {
+    return { owner: 'local', name: process.cwd().split(/[\\/]/).pop() || 'unknown' };
+  }
+}
+
+/**
+ * Get git author from config
+ */
+function getGitAuthor(): string {
+  try {
+    return execSync('git config user.name', { encoding: 'utf-8' }).trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Extract PR number from branch name if it follows common patterns
+ * e.g., feature/PR-123, fix-123, 123-feature
+ */
+function extractPRNumber(branchName?: string, title?: string): number {
+  // Try to extract from branch name
+  if (branchName) {
+    const branchMatch = branchName.match(/(?:PR-?|#)?(\d+)/i);
+    if (branchMatch) return parseInt(branchMatch[1], 10);
+  }
+  // Try to extract from title
+  if (title) {
+    const titleMatch = title.match(/#(\d+)/);
+    if (titleMatch) return parseInt(titleMatch[1], 10);
+  }
+  // Generate a timestamp-based "PR number" for local analysis
+  return Math.floor(Date.now() / 1000) % 100000;
+}
+
+/**
  * Estimate diff size in tokens
  */
 function estimateDiffSize(diff: string): number {
@@ -262,15 +334,16 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       }
       throw error;
     }
-    
+
     // Get provider and API key from config or environment
     if (options.verbose) {
       console.log(chalk.gray(`   Debug: options.provider: ${options.provider || 'undefined'}`));
       console.log(chalk.gray(`   Debug: config.ai?.provider: ${config.ai?.provider || 'undefined'}`));
     }
-    const provider = (options.provider || config.ai?.provider || 'anthropic').toLowerCase() as 'anthropic' | 'openai' | 'google';
+    const provider = (options.provider || config.ai?.provider || 'anthropic').toLowerCase() as SupportedProvider;
     const apiKey = getApiKey(provider, config);
-    
+    const model = options.model || config.ai?.model;
+
     if (!apiKey) {
       spinner.fail('No API key found');
       console.error(chalk.yellow('💡  Please set it in one of these ways:'));
@@ -279,9 +352,13 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
       console.error(chalk.gray('      - Anthropic (Claude): export ANTHROPIC_API_KEY="your-api-key"'));
       console.error(chalk.gray('      - OpenAI (GPT): export OPENAI_API_KEY="your-api-key"'));
       console.error(chalk.gray('      - Google (Gemini): export GOOGLE_API_KEY="your-api-key"'));
+      console.error(chalk.gray('      - Zhipu (GLM): export ZHIPU_API_KEY="your-api-key"'));
+      if (options.verbose) {
+        console.error(chalk.gray(`   Debug: Provider=${provider}, Config apiKeys=${JSON.stringify(config.apiKeys || {})}`));
+      }
       process.exit(1);
     }
-    
+
     spinner.succeed(`Using AI provider: ${provider}`);
 
     // Resolve default branch if needed
@@ -294,13 +371,13 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
           githubToken: process.env.GITHUB_TOKEN,
           fallbackToGit: true,
         });
-        
+
         defaultBranch = branchResult.branch;
-        
+
         if (branchResult.warning && options.verbose) {
           console.log(chalk.yellow(`\n⚠️  ${branchResult.warning}`));
         }
-        
+
         if (options.verbose) {
           console.log(chalk.gray(`   Using branch: ${defaultBranch} (source: ${branchResult.source})`));
         }
@@ -391,32 +468,243 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
     // Check for arch-docs
     const useArchDocs = options.archDocs !== false; // Default to true if not specified
     const hasArchDocs = archDocsExists();
-    
+
     if (useArchDocs && hasArchDocs) {
       console.log(chalk.cyan('📚 Architecture documentation detected - including in analysis\n'));
     } else if (options.archDocs && !hasArchDocs) {
       console.log(chalk.yellow('⚠️  --arch-docs flag specified but no .arch-docs folder found\n'));
     }
 
-    const model = options.model || config.ai?.model;
+    // Get repo info early so we can pass it to the agent for caching
+    const repoInfo = getRepoInfo();
+
     const agent = new PRAnalyzerAgent({
-      provider: provider as any,
+      mode: ExecutionMode.EXECUTE,  // CLI always executes with API key
+      provider: provider,
       apiKey,
       model,
     });
-    const result = await agent.analyze(diff, title, mode, {
+    const analysisResult = await agent.analyze(diff, title, mode, {
       useArchDocs: useArchDocs && hasArchDocs,
       repoPath: process.cwd(),
+      repoOwner: repoInfo.owner,
+      repoName: repoInfo.name,
       language: config.analysis?.language,
       framework: config.analysis?.framework,
       enableStaticAnalysis: config.analysis?.enableStaticAnalysis !== false,
     });
 
+    // Type guard: CLI always uses EXECUTE mode, so result is always AgentResult
+    if (analysisResult.mode === 'prompt_only') {
+      throw new Error('Unexpected prompt-only result in CLI EXECUTE mode');
+    }
+    const result = analysisResult as AgentResult;
+
     // Display results
-    displayAgentResults(result, mode, options.verbose || false);
+    displayAgentResults(result, mode, options.verbose || false, options.showClassification || false);
+
+    // Run and display coverage analysis if requested
+    if (options.scanCoverage || options.showCoverage) {
+      console.log(chalk.gray('\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+      const coverageAnalysis = getCoverageAnalysis(process.cwd());
+      if (coverageAnalysis.hasReport) {
+        console.log('\\n' + formatCoverageAnalysis(coverageAnalysis));
+      } else {
+        console.log(chalk.yellow('\\n📊 No coverage report found.'));
+        console.log(chalk.gray('   Run: npm test -- --coverage to generate one.'));
+      }
+    }
+
+    // Run and display ESLint static analysis if requested
+    if (options.showStaticAnalysis) {
+      console.log(chalk.gray('\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+      console.log(chalk.cyan('\\n🔬 Running static analysis...'));
+      const staticAnalysis = await runEslintAnalysis(process.cwd());
+      console.log('\\n' + formatStaticAnalysis(staticAnalysis));
+    }
+
+    // Save analysis results to local database for dashboard
+    try {
+      const repoInfo = getRepoInfo();
+      const author = getGitAuthor();
+      let branchName: string | undefined;
+      try {
+        branchName = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+      } catch {
+        // ignore
+      }
+      const prNumber = extractPRNumber(branchName, title);
+
+      // Calculate overall complexity from file analyses
+      let overallComplexity = 1;
+      if (result.fileAnalyses && result.fileAnalyses.size > 0) {
+        const complexities = Array.from(result.fileAnalyses.values()).map((f: any) => f.complexity || 1);
+        overallComplexity = Math.round(complexities.reduce((a: number, b: number) => a + b, 0) / complexities.length);
+      }
+
+      // Calculate DevOps cost if estimates available
+      const devOpsCostMonthly = result.devOpsCostEstimates?.reduce(
+        (sum: number, e: any) => sum + (e.estimatedNewCost || 0), 0
+      ) || 0;
+      const devOpsResources = result.devOpsCostEstimates
+        ? JSON.stringify(result.devOpsCostEstimates)
+        : undefined;
+
+      saveAnalysis({
+        pr_number: prNumber,
+        repo_owner: repoInfo.owner,
+        repo_name: repoInfo.name,
+        author: author,
+        title: title || 'Untitled Analysis',
+        complexity: overallComplexity,
+        risks_count: result.fixes?.filter((f: Fix) => f.severity === 'critical' || f.severity === 'warning').length || 0,
+        risks: JSON.stringify(result.fixes?.filter((f: Fix) => f.severity === 'critical' || f.severity === 'warning').map((f: Fix) => f.comment) || []),
+        recommendations: JSON.stringify(result.recommendations || []),
+        // DevOps/Infrastructure cost tracking (v0.2.0)
+        devops_cost_monthly: devOpsCostMonthly > 0 ? devOpsCostMonthly : undefined,
+        devops_resources: devOpsResources,
+        has_test_suggestions: (result.testSuggestions?.length ?? 0) > 0 ? 1 : 0,
+        test_suggestions_count: result.testSuggestions?.length ?? 0,
+        coverage_percentage: result.coverageReport?.overallPercentage,
+        // Project classification cache (v0.3.0)
+        project_classification: result.projectClassification,
+      });
+
+      if (options.verbose) {
+        console.log(chalk.gray(`   Analysis saved to local database (PR #${prNumber})`));
+      }
+    } catch (saveError: any) {
+      if (options.verbose) {
+        console.log(chalk.yellow(`   Warning: Could not save to local database: ${saveError.message}`));
+      }
+    }
+
+    // Run Peer Review if enabled (via flag or config)
+    const peerReviewEnabled = options.peerReview ?? config.peerReview?.enabled ?? false;
+    if (options.verbose) {
+      console.log(chalk.gray(`\n   Debug: peerReviewEnabled=${peerReviewEnabled}, options.peerReview=${options.peerReview}, config.peerReview?.enabled=${config.peerReview?.enabled}`));
+    }
+    if (peerReviewEnabled) {
+      // Pass the same provider config to peer review so it uses the same LLM
+      const peerReviewResult = await runPeerReview(config, diff, title, result, options.verbose || false, {
+        provider,
+        apiKey,
+        model,
+      });
+
+      // Save peer review results to database for dashboard
+      if (peerReviewResult && peerReviewResult.enabled && peerReviewResult.analysis) {
+        try {
+          const repoInfo = getRepoInfo();
+          const author = getGitAuthor();
+          let branchName: string | undefined;
+          try {
+            branchName = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+          } catch {
+            // ignore
+          }
+          const prNumber = extractPRNumber(branchName, title);
+
+          // Calculate overall complexity from file analyses
+          let overallComplexity = 1;
+          if (result.fileAnalyses && result.fileAnalyses.size > 0) {
+            const complexities = Array.from(result.fileAnalyses.values()).map((f: any) => f.complexity || 1);
+            overallComplexity = Math.round(complexities.reduce((a: number, b: number) => a + b, 0) / complexities.length);
+          }
+
+          // Calculate DevOps cost if estimates available
+          const devOpsCostMonthly = result.devOpsCostEstimates?.reduce(
+            (sum: number, e: any) => sum + (e.estimatedNewCost || 0), 0
+          ) || 0;
+          const devOpsResources = result.devOpsCostEstimates
+            ? JSON.stringify(result.devOpsCostEstimates)
+            : undefined;
+
+          // Extract peer review data
+          const analysis = peerReviewResult.analysis;
+          const primaryTicket = peerReviewResult.primaryTicket;
+
+          // Determine verdict from peerReview analysis
+          let verdict = 'needs_discussion';
+          if (analysis.peerReview.readyForReview && analysis.peerReview.blockers.length === 0) {
+            verdict = 'approve';
+          } else if (analysis.peerReview.blockers.length > 0) {
+            verdict = 'request_changes';
+          }
+
+          saveAnalysis({
+            pr_number: prNumber,
+            repo_owner: repoInfo.owner,
+            repo_name: repoInfo.name,
+            author: author,
+            title: title || 'Untitled Analysis',
+            complexity: overallComplexity,
+            risks_count: result.fixes?.filter((f: Fix) => f.severity === 'critical' || f.severity === 'warning').length || 0,
+            risks: JSON.stringify(result.fixes?.filter((f: Fix) => f.severity === 'critical' || f.severity === 'warning').map((f: Fix) => f.comment) || []),
+            recommendations: JSON.stringify(result.recommendations || []),
+            // DevOps/Infrastructure cost tracking (v0.2.0)
+            devops_cost_monthly: devOpsCostMonthly > 0 ? devOpsCostMonthly : undefined,
+            devops_resources: devOpsResources,
+            has_test_suggestions: (result.testSuggestions?.length ?? 0) > 0 ? 1 : 0,
+            test_suggestions_count: result.testSuggestions?.length ?? 0,
+            coverage_percentage: result.coverageReport?.overallPercentage,
+            // Peer Review data (v0.3.0)
+            peer_review_enabled: 1,
+            ticket_key: primaryTicket?.key,
+            ticket_quality_score: analysis.ticketQuality.overallScore,
+            ticket_quality_tier: analysis.ticketQuality.tier,
+            ac_compliance_percentage: analysis.acValidation?.compliancePercentage,
+            ac_requirements_met: analysis.acValidation?.criteriaAnalysis?.filter(c => c.status === 'met').length,
+            ac_requirements_total: analysis.acValidation?.criteriaAnalysis?.length,
+            peer_review_verdict: verdict,
+            peer_review_blockers: JSON.stringify(analysis.peerReview.blockers),
+            peer_review_warnings: JSON.stringify(analysis.peerReview.warnings),
+            implementation_completeness: analysis.peerReview.implementationCompleteness,
+            quality_score: analysis.peerReview.qualityScore,
+          });
+
+          if (options.verbose) {
+            console.log(chalk.gray(`   Peer review results saved to database (PR #${prNumber}, ticket: ${primaryTicket?.key || 'N/A'})`));
+          }
+        } catch (saveError: any) {
+          if (options.verbose) {
+            console.log(chalk.yellow(`   Warning: Could not save peer review to database: ${saveError.message}`));
+          }
+        }
+      }
+    }
+
+    // Auto-start and open dashboard after analysis completes
+    try {
+      const dashboardUrl = 'http://localhost:3000';
+      console.log(chalk.gray(`\n📊 Starting dashboard...`));
+
+      // Start dashboard server in background
+      const { spawn } = await import('child_process');
+      const dashboardProcess = spawn(process.execPath, [
+        process.argv[1], // Path to CLI entry point
+        'dashboard'
+      ], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      dashboardProcess.unref();
+
+      // Wait a moment for server to start
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      console.log(chalk.green(`✓ Dashboard running at ${dashboardUrl}`));
+      console.log(chalk.gray(`   Opening browser...`));
+      await open(dashboardUrl);
+    } catch (openError: any) {
+      if (options.verbose) {
+        console.log(chalk.yellow(`   Could not start dashboard automatically: ${openError.message}`));
+      }
+      console.log(chalk.gray(`   Start manually with: pr-agent dashboard`));
+    }
   } catch (error: any) {
     spinner.fail('Analysis failed');
-    
+
     // Handle specific error types with user-friendly messages
     if (error instanceof ConfigurationError) {
       console.error(chalk.red(`\n❌ Configuration Error: ${error.message}`));
@@ -445,7 +733,7 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
         .replace(/sk-[a-zA-Z0-9_-]+/g, 'sk-***')
         .replace(/ghp_[a-zA-Z0-9]+/g, 'ghp_***')
         .substring(0, 500); // Limit length
-      
+
       console.error(chalk.red(`\n❌  Error: ${sanitizedMessage}`));
       if (options.verbose && error.stack) {
         console.error(chalk.gray('\nStack trace:'));
@@ -459,7 +747,7 @@ export async function analyzePR(options: AnalyzeOptions = {}): Promise<void> {
 /**
  * Display agent analysis results
  */
-function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean): void {
+function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean, showClassification: boolean = false): void {
   console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.green.bold('\n✨  Agent Analysis Complete!\n'));
 
@@ -479,12 +767,18 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
     console.log('\n');
   }
 
+  // Display project classification only if explicitly requested
+  if (showClassification && result.projectClassification) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(result.projectClassification);
+  }
+
   // Combined quick actions section - only fixes with line numbers (for PR comments)
   // Filter: only critical/warning, must have line number, sort critical first
   const prCommentFixes = result.fixes
-    ?.filter((f: Fix) => 
-      (f.severity === 'critical' || f.severity === 'warning') && 
-      f.line !== undefined && 
+    ?.filter((f: Fix) =>
+      (f.severity === 'critical' || f.severity === 'warning') &&
+      f.line !== undefined &&
       f.line !== null
     )
     .sort((a: Fix, b: Fix) => {
@@ -493,24 +787,24 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
       if (a.severity !== 'critical' && b.severity === 'critical') return 1;
       return 0;
     }) || [];
-  
+
   // Add recommendations (from AI) - only if we have critical issues
-  const recommendations = (criticalFixes.length > 0 && result.recommendations) 
-    ? result.recommendations.slice(0, 3) 
+  const recommendations = (criticalFixes.length > 0 && result.recommendations)
+    ? result.recommendations.slice(0, 3)
     : [];
-  
+
   if (prCommentFixes.length > 0 || recommendations.length > 0) {
     console.log(chalk.cyan.bold(`💡 Quick Actions\n`));
 
     let actionIndex = 1;
-    
+
     // Show fixes with line numbers (sorted critical first)
     prCommentFixes.forEach((fix: Fix) => {
       const severityIcon = fix.severity === 'critical' ? chalk.red('🔴') : chalk.yellow('🟡');
       const severityLabel = fix.severity === 'critical' ? chalk.red.bold('CRITICAL') : chalk.yellow.bold('WARNING');
       const sourceLabel = fix.source === 'semgrep' ? chalk.blue(' [Semgrep]') : chalk.magenta(' [AI]');
       const shortComment = fix.comment.split('\n')[0].substring(0, 120);
-      
+
       console.log(chalk.white(`  ${actionIndex}. ${severityIcon} ${chalk.cyan(`\`${fix.file}:${fix.line}\``)} - ${severityLabel}${sourceLabel}`));
       console.log(chalk.gray(`     ${shortComment}${fix.comment.length > 120 ? '...' : ''}`));
       console.log('');
@@ -524,7 +818,7 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
         let severityIcon = chalk.yellow('🟡');
         let severityLabel = chalk.yellow.bold('WARNING');
         let recText = rec;
-        
+
         // Check if recommendation starts with **CRITICAL: or **WARNING:
         if (rec.match(/^\*\*CRITICAL:/i)) {
           severityIcon = chalk.red('🔴');
@@ -538,10 +832,10 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
           severityIcon = chalk.red('🔴');
           severityLabel = chalk.red.bold('CRITICAL');
         }
-        
+
         const sourceLabel = chalk.magenta(' [AI]');
         const shortComment = recText.substring(0, 120);
-        
+
         // Format exactly like Semgrep: Number. Icon - LABEL [Source]
         console.log(chalk.white(`  ${actionIndex}. ${severityIcon} - ${severityLabel}${sourceLabel}`));
         // Indented comment line with severity prefix
@@ -551,12 +845,64 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
       });
     }
 
-    const totalFilteredFixes = result.fixes?.filter((f: Fix) => 
+    const totalFilteredFixes = result.fixes?.filter((f: Fix) =>
       (f.severity === 'critical' || f.severity === 'warning') && f.line !== undefined && f.line !== null
     ).length || 0;
-    
+
     if (totalFilteredFixes > prCommentFixes.length) {
       console.log(chalk.gray(`  ... and ${totalFilteredFixes - prCommentFixes.length} more issues\n`));
+    }
+  }
+
+  // Show recommendations if available
+  if (result.recommendations.length > 0) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.cyan.bold('\n💡 Recommendations\n'));
+    result.recommendations.forEach((rec: string, i: number) => {
+      console.log(chalk.white(`  ${i + 1}. ${rec}`));
+    });
+    console.log('\n');
+  }
+
+  // Show agent reasoning if available (minimal)
+  if (verbose && result.reasoning.length > 0 && result.reasoning.length <= 5) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.cyan.bold('\n🤔 Analysis Strategy\n'));
+    result.reasoning.forEach((reason: string, i: number) => {
+      if (reason.includes('Strategy:') || i === 0) {
+        console.log(chalk.gray(`  ${reason.substring(0, 150)}${reason.length > 150 ? '...' : ''}`));
+      }
+    });
+    console.log('\n');
+  }
+
+  // Show arch-docs impact if used
+  if (result.archDocsImpact?.used) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.blue.bold('\n📚 Architecture Documentation Impact\n'));
+
+    console.log(chalk.white(`Documents analyzed: ${result.archDocsImpact.docsAvailable}`));
+    console.log(chalk.white(`Relevant sections used: ${result.archDocsImpact.sectionsUsed}\n`));
+
+    if (result.archDocsImpact.influencedStages.length > 0) {
+      console.log(chalk.cyan('Stages influenced by arch-docs:'));
+      result.archDocsImpact.influencedStages.forEach((stage: string) => {
+        const stageEmoji = stage === 'file-analysis' ? '🔍' :
+          stage === 'risk-detection' ? '⚠️' :
+            stage === 'complexity-calculation' ? '📊' :
+              stage === 'summary-generation' ? '📝' :
+                stage === 'refinement' ? '🔄' : '✨';
+        console.log(chalk.white(`  ${stageEmoji} ${stage}`));
+      });
+      console.log('');
+    }
+
+    if (result.archDocsImpact.keyInsights.length > 0) {
+      console.log(chalk.cyan('Key insights from arch-docs integration:\n'));
+      result.archDocsImpact.keyInsights.forEach((insight: string, i: number) => {
+        console.log(chalk.white(`  ${i + 1}. ${insight}`));
+      });
+      console.log('');
     }
   } else {
     console.log(chalk.green.bold('✅ Status\n'));
@@ -568,7 +914,260 @@ function displayAgentResults(result: any, mode: AnalysisMode, verbose: boolean):
     console.log(chalk.gray(`Total tokens used: ${result.totalTokensUsed.toLocaleString()}`));
   }
 
+  // Show test suggestions if available
+  if (result.testSuggestions && result.testSuggestions.length > 0) {
+    const newTests = result.testSuggestions.filter((s: any) => !s.isEnhancement);
+    const enhancements = result.testSuggestions.filter((s: any) => s.isEnhancement);
+
+    // Show new test suggestions
+    if (newTests.length > 0) {
+      console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+      console.log(chalk.yellow.bold(`\n🧪 Test Suggestions (${newTests.length} files need tests)\n`));
+
+      for (const suggestion of newTests) {
+        console.log(chalk.cyan(`  📝 ${suggestion.forFile}`));
+        console.log(chalk.gray(`     Framework: ${suggestion.testFramework}`));
+        if (suggestion.testFilePath) {
+          console.log(chalk.gray(`     Suggested test file: ${suggestion.testFilePath}`));
+        }
+        console.log(chalk.white(`     ${suggestion.description}\n`));
+
+        if (suggestion.testCode) {
+          console.log(chalk.gray('     ┌─────────────────────────────────────────'));
+          const codeLines = suggestion.testCode.split('\n').slice(0, 10);
+          codeLines.forEach((line: string) => {
+            console.log(chalk.gray('     │ ') + chalk.white(line));
+          });
+          if (suggestion.testCode.split('\n').length > 10) {
+            console.log(chalk.gray('     │ ... (copy full code below)'));
+          }
+          console.log(chalk.gray('     └─────────────────────────────────────────\n'));
+        }
+      }
+    }
+
+    // Show test enhancement suggestions
+    if (enhancements.length > 0) {
+      console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+      console.log(chalk.green.bold(`\n🔬 Test Enhancement Suggestions (${enhancements.length} test files can be improved)\n`));
+
+      for (const suggestion of enhancements) {
+        console.log(chalk.cyan(`  📊 ${suggestion.existingTestFile || suggestion.testFilePath}`));
+        console.log(chalk.gray(`     Source: ${suggestion.forFile}`));
+        console.log(chalk.white(`     ${suggestion.description}\n`));
+
+        if (suggestion.testCode && suggestion.testCode.trim()) {
+          console.log(chalk.gray('     ┌─────────────────────────────────────────'));
+          const codeLines = suggestion.testCode.split('\n').slice(0, 15);
+          codeLines.forEach((line: string) => {
+            console.log(chalk.gray('     │ ') + chalk.white(line));
+          });
+          if (suggestion.testCode.split('\n').length > 15) {
+            console.log(chalk.gray('     │ ... (more enhancements available)'));
+          }
+          console.log(chalk.gray('     └─────────────────────────────────────────\n'));
+        }
+      }
+    }
+  }
+
+  // Show coverage report if available
+  if (result.coverageReport && result.coverageReport.available) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.green.bold('\n📊 Test Coverage Report\n'));
+
+    const coverage = result.coverageReport;
+    if (coverage.overallPercentage !== undefined) {
+      const emoji = coverage.overallPercentage >= 80 ? '🟢' : coverage.overallPercentage >= 60 ? '🟡' : '🔴';
+      console.log(chalk.white(`  ${emoji} Overall Coverage: ${coverage.overallPercentage.toFixed(1)}%`));
+    }
+
+    if (coverage.lineCoverage !== undefined) {
+      console.log(chalk.gray(`     Lines: ${coverage.lineCoverage.toFixed(1)}%`));
+    }
+
+    if (coverage.branchCoverage !== undefined) {
+      console.log(chalk.gray(`     Branches: ${coverage.branchCoverage.toFixed(1)}%`));
+    }
+
+    if (coverage.delta !== undefined) {
+      const deltaEmoji = coverage.delta >= 0 ? '📈' : '📉';
+      const deltaColor = coverage.delta >= 0 ? chalk.green : chalk.red;
+      console.log(deltaColor(`  ${deltaEmoji} Coverage Delta: ${coverage.delta >= 0 ? '+' : ''}${coverage.delta.toFixed(1)}%`));
+    }
+
+    if (coverage.coverageTool) {
+      console.log(chalk.gray(`\n     Tool: ${coverage.coverageTool}`));
+    }
+    console.log('');
+  }
+
+  // Show DevOps cost estimates if available
+  if (result.devOpsCostEstimates && result.devOpsCostEstimates.length > 0) {
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.yellow.bold('\n💰 AWS Infrastructure Cost Estimates\n'));
+
+    let totalCost = 0;
+    for (const estimate of result.devOpsCostEstimates) {
+      const emoji = estimate.confidence === 'high' ? '🟢' : estimate.confidence === 'medium' ? '🟡' : '🔴';
+      console.log(chalk.white(`  ${emoji} ${estimate.resourceType.toUpperCase()}: ~$${estimate.estimatedNewCost.toFixed(2)}/month`));
+      if (estimate.details) {
+        console.log(chalk.gray(`     ${estimate.details}`));
+      }
+      totalCost += estimate.estimatedNewCost;
+    }
+
+    console.log(chalk.cyan.bold(`\n  📊 Total Estimated Impact: ~$${totalCost.toFixed(2)}/month`));
+    console.log(chalk.gray('\n  ⚠️  Estimates are approximate. Actual costs depend on usage and configuration.\n'));
+  }
+
   console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
 }
 
+/**
+ * Run Peer Review analysis against linked Jira tickets
+ *
+ * This extends the PR analysis with business context validation:
+ * - Fetches linked Jira tickets from PR title/branch
+ * - Rates ticket quality
+ * - Validates implementation against derived requirements
+ * - Provides senior-dev style verdict
+ */
+async function runPeerReview(
+  config: any,
+  diff: string,
+  title: string | undefined,
+  prAnalysisResult: any,
+  verbose: boolean,
+  providerOptions: { provider: SupportedProvider; apiKey: string; model?: string }
+): Promise<PeerReviewResult | null> {
+  const spinner = ora('Running Peer Review analysis...').start();
 
+  try {
+    // Create LLM using the same provider as main analysis
+    const llm = ProviderFactory.createChatModel({
+      provider: providerOptions.provider,
+      apiKey: providerOptions.apiKey,
+      model: providerOptions.model,
+      temperature: 0.2,
+      maxTokens: 50000,
+    });
+
+    // Create peer review integration from config, passing the LLM in EXECUTE mode
+    const peerReviewConfig = config.peerReview || {};
+    const integration = createPeerReviewIntegration(peerReviewConfig, PeerReviewMode.EXECUTE, llm);
+
+    if (!integration.isEnabled()) {
+      spinner.warn('Peer Review enabled but not configured. Add Jira settings to config.');
+      console.log(chalk.gray('   Run: pr-agent config --set peerReview.instanceUrl=https://your.atlassian.net'));
+      console.log(chalk.gray('   Or configure MCP: peerReview.useMcp=true'));
+      if (verbose) {
+        console.log(chalk.gray(`   Debug: peerReviewConfig=${JSON.stringify(peerReviewConfig)}`));
+      }
+      return null;
+    }
+
+    // Get branch name for ticket extraction
+    let branchName: string | undefined;
+    try {
+      branchName = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+    } catch {
+      // Ignore - branch name is optional
+    }
+
+    // Get commit messages for ticket extraction
+    let commitMessages: string[] = [];
+    try {
+      const commits = execSync('git log --oneline -10', { encoding: 'utf-8' });
+      commitMessages = commits.trim().split('\n');
+    } catch {
+      // Ignore
+    }
+
+    // Parse diff to get file info
+    const files = parseDiffFiles(diff);
+
+    spinner.text = 'Extracting ticket references...';
+
+    // Run peer review analysis
+    const result = await integration.analyze({
+      prTitle: title || 'Untitled PR',
+      prDescription: undefined, // Could extract from git commit body
+      branchName,
+      commitMessages,
+      diff,
+      files,
+      prSummary: prAnalysisResult.summary,
+      prRisks: prAnalysisResult.overallRisks,
+      prComplexity: prAnalysisResult.overallComplexity,
+    });
+
+    spinner.succeed('Peer Review analysis complete');
+
+    // Display peer review results
+    const output = formatPeerReviewOutput(result);
+    if (output) {
+      console.log(output);
+    }
+
+    if (verbose && result.ticketReferences.length > 0) {
+      console.log(chalk.gray('Ticket references found:'));
+      result.ticketReferences.forEach((ref) => {
+        console.log(chalk.gray(`  - ${ref.key} (from ${ref.source}, confidence: ${ref.confidence}%)`));
+      });
+    }
+
+    return result;
+  } catch (error: any) {
+    spinner.fail('Peer Review analysis failed');
+    console.error(chalk.yellow(`⚠️  ${error.message || 'Unknown error'}`));
+    console.log(chalk.gray('   The main PR analysis completed successfully.'));
+    console.log(chalk.gray('   Peer Review is an optional enhancement - check Jira configuration.'));
+    return null;
+  }
+}
+
+/**
+ * Parse diff to extract file information
+ */
+function parseDiffFiles(diff: string): Array<{
+  path: string;
+  additions: number;
+  deletions: number;
+  status: string;
+}> {
+  const files: Array<{
+    path: string;
+    additions: number;
+    deletions: number;
+    status: string;
+  }> = [];
+
+  const filePattern = /^diff --git a\/(.+?) b\/(.+?)$/gm;
+  let match;
+
+  while ((match = filePattern.exec(diff)) !== null) {
+    const filePath = match[2] !== '/dev/null' ? match[2] : match[1];
+    const isNew = match[1] === '/dev/null' || match[1].startsWith('dev/null');
+    const isDeleted = match[2] === '/dev/null';
+
+    // Count additions and deletions (simplified)
+    const fileStart = match.index;
+    const nextFileMatch = filePattern.exec(diff);
+    const fileEnd = nextFileMatch ? nextFileMatch.index : diff.length;
+    filePattern.lastIndex = match.index + 1; // Reset to continue from after current match
+
+    const fileContent = diff.substring(fileStart, fileEnd);
+    const additions = (fileContent.match(/^\+[^+]/gm) || []).length;
+    const deletions = (fileContent.match(/^-[^-]/gm) || []).length;
+
+    files.push({
+      path: filePath,
+      additions,
+      deletions,
+      status: isNew ? 'added' : isDeleted ? 'deleted' : 'modified',
+    });
+  }
+
+  return files;
+}

@@ -1,6 +1,6 @@
 import { ILLMProvider } from './provider.interface.js';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
-export type SupportedProvider = 'anthropic' | 'openai' | 'google';
+export type SupportedProvider = 'anthropic' | 'openai' | 'google' | 'zhipu';
 export interface ProviderOptions {
     provider?: SupportedProvider;
     apiKey?: string;

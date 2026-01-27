@@ -3,27 +3,53 @@
  * LangChain-based agent for intelligent PR analysis
  */
 
+import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { BasePRAgentWorkflow } from './base-pr-agent-workflow.js';
-import { AgentContext, AgentResult, AgentMetadata, AnalysisMode } from '../types/agent.types.js';
+import { AgentContext, AgentResult, AgentResultOrPrompts, AgentMetadata, AnalysisMode, ExecutionMode } from '../types/agent.types.js';
 import { parseDiff } from '../tools/pr-analysis-tools.js';
 import { ProviderFactory, ProviderOptions } from '../providers/index.js';
 import { parseAllArchDocs, archDocsExists } from '../utils/arch-docs-parser.js';
 import { buildArchDocsContext } from '../utils/arch-docs-rag.js';
 
 /**
+ * Extended options that allow passing a pre-configured model
+ * Used by MCP server to pass its underlying LLM model
+ */
+export interface PRAnalyzerOptions extends ProviderOptions {
+  /** Execution mode: EXECUTE (with API key) or PROMPT_ONLY (return prompts) */
+  mode?: ExecutionMode;
+  /** Pre-configured LangChain model (for MCP server pass-through) */
+  chatModel?: BaseChatModel;
+}
+
+/**
  * PR Analysis Agent using LangChain and LangGraph
  */
 export class PRAnalyzerAgent extends BasePRAgentWorkflow {
-  constructor(options: ProviderOptions = {}) {
-    const model = ProviderFactory.createChatModel({
-      provider: options.provider || 'anthropic',
-      apiKey: options.apiKey,
-      model: options.model,
-      temperature: options.temperature ?? 0.2,
-      maxTokens: options.maxTokens ?? 4000,
-    });
-    
-    super(model);
+  constructor(options: PRAnalyzerOptions = {}) {
+    // Determine execution mode
+    const mode = options.mode || ExecutionMode.EXECUTE;
+
+    let model: BaseChatModel | undefined;
+
+    // Only create model in EXECUTE mode
+    if (mode === ExecutionMode.EXECUTE) {
+      // If a pre-configured BaseChatModel is passed (MCP case), use it directly
+      if (options.chatModel) {
+        model = options.chatModel;
+      } else {
+        // Otherwise create model via ProviderFactory (CLI/Action case - backward compatible)
+        model = ProviderFactory.createChatModel({
+          provider: options.provider || 'anthropic',
+          apiKey: options.apiKey,
+          model: options.model,
+          temperature: options.temperature ?? 0.2,
+          maxTokens: options.maxTokens ?? 50000,
+        });
+      }
+    }
+
+    super(mode, model);
   }
 
   /**
@@ -46,19 +72,22 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
 
   /**
    * Analyze a PR with full agent workflow
+   * Returns either executed results (EXECUTE mode) or prompts (PROMPT_ONLY mode)
    */
   async analyze(
     diff: string,
     title?: string,
     mode?: AnalysisMode,
-    options?: { 
-      useArchDocs?: boolean; 
+    options?: {
+      useArchDocs?: boolean;
       repoPath?: string;
+      repoOwner?: string;
+      repoName?: string;
       language?: string;
       framework?: string;
       enableStaticAnalysis?: boolean;
     }
-  ): Promise<AgentResult> {
+  ): Promise<AgentResultOrPrompts> {
     // Parse diff into files
     const files = parseDiff(diff);
 
@@ -78,6 +107,11 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
       maxCost: 5.0,
       mode: mode || { summary: true, risks: true, complexity: true },
       archDocs: archDocsContext,
+      config: {
+        repoPath: options?.repoPath,
+        repoOwner: options?.repoOwner,
+        repoName: options?.repoName,
+      },
       language: options?.language,
       framework: options?.framework,
       enableStaticAnalysis: options?.enableStaticAnalysis !== false, // Default to true
@@ -95,16 +129,16 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
    * Quick analysis without refinement
    */
   async quickAnalyze(
-    diff: string, 
-    title?: string, 
-    options?: { 
-      useArchDocs?: boolean; 
+    diff: string,
+    title?: string,
+    options?: {
+      useArchDocs?: boolean;
       repoPath?: string;
       language?: string;
       framework?: string;
       enableStaticAnalysis?: boolean;
     }
-  ): Promise<AgentResult> {
+  ): Promise<AgentResultOrPrompts> {
     const files = parseDiff(diff);
 
     // Build arch-docs context if enabled
@@ -135,7 +169,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
   /**
    * Analyze specific files only
    */
-  async analyzeFiles(diff: string, filePaths: string[], options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResult> {
+  async analyzeFiles(diff: string, filePaths: string[], options?: { useArchDocs?: boolean; repoPath?: string }): Promise<AgentResultOrPrompts> {
     const allFiles = parseDiff(diff);
     const files = allFiles.filter(f => filePaths.includes(f.path));
 
@@ -174,7 +208,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
     const baseTokens = 2000;
     const diffTokens = Math.ceil(context.diff.length / 4); // ~4 chars per token
     const filesTokens = context.files.length * 100;
-    
+
     return baseTokens + diffTokens + filesTokens;
   }
 }
@@ -182,7 +216,7 @@ export class PRAnalyzerAgent extends BasePRAgentWorkflow {
 /**
  * Factory function to create PR analyzer agent
  */
-export function createPRAnalyzerAgent(options: ProviderOptions = {}): PRAnalyzerAgent {
+export function createPRAnalyzerAgent(options: PRAnalyzerOptions = {}): PRAnalyzerAgent {
   return new PRAnalyzerAgent(options);
 }
 
@@ -191,8 +225,8 @@ export function createPRAnalyzerAgent(options: ProviderOptions = {}): PRAnalyzer
  * @deprecated Use PRAnalyzerAgent constructor with ProviderOptions instead
  */
 export function createPRAnalyzerAgentLegacy(apiKey: string, modelName?: string): PRAnalyzerAgent {
-  return new PRAnalyzerAgent({ 
-    apiKey, 
+  return new PRAnalyzerAgent({
+    apiKey,
     model: modelName,
     provider: 'anthropic'
   });

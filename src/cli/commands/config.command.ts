@@ -20,12 +20,13 @@ const DEFAULT_CONFIG = {
     anthropic: '',
     openai: '',
     google: '',
+    zhipu: '',
   },
   ai: {
-    provider: 'claude',
+    provider: 'anthropic',
     model: 'claude-sonnet-4-5-20250929',
     temperature: 0.2,
-    maxTokens: 2000,
+    maxTokens: 50000,
   },
   analysis: {
     defaultMode: 'full',
@@ -53,6 +54,16 @@ const DEFAULT_CONFIG = {
     verbose: false,
     showStrategy: true,
     showRecommendations: true,
+  },
+  peerReview: {
+    enabled: true,
+    useMcp: false,
+    analyzeAcceptanceCriteria: true,
+    rateTicketQuality: true,
+    generateTestSuggestions: true,
+    checkScopeCreep: true,
+    includeTicketDetails: true,
+    verbose: false,
   },
 };
 

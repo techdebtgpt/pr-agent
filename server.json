@@ -1,0 +1,83 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.techdebtgpt/pr-agent",
+  "description": "AI-powered pull request analyzer MCP server - provides diff parsing, risk detection, complexity scoring, and Jira integration for any MCP-compatible tool",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/techdebtgpt/pr-agent"
+  },
+  "license": "Apache-2.0",
+  "author": {
+    "name": "TechDebtGPT",
+    "url": "https://github.com/techdebtgpt"
+  },
+  "packages": [
+    {
+      "registry_type": "npm",
+      "identifier": "@techdebtgpt/pr-agent",
+      "version": ">=0.1.0"
+    }
+  ],
+  "tools": [
+    {
+      "name": "analyze",
+      "description": "Analyze PR/branch changes - parses git diff, detects risks using pattern matching, calculates complexity, extracts Jira ticket references, and returns formatted analysis for AI enhancement",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "Base branch to compare against (default: auto-detected)"
+          },
+          "staged": {
+            "type": "boolean",
+            "description": "Analyze staged changes instead of branch diff"
+          },
+          "title": {
+            "type": "string",
+            "description": "PR title (auto-detected from git if not provided)"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory (defaults to current directory)"
+          },
+          "peerReview": {
+            "type": "boolean",
+            "description": "Enable Jira ticket validation"
+          },
+          "archDocs": {
+            "type": "boolean",
+            "description": "Include architecture documentation context"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "dashboard",
+      "description": "Start the PR Agent web dashboard on localhost for viewing analysis history, code quality trends, and ROI metrics",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "number",
+            "description": "Port to run on (default: 3000)"
+          }
+        }
+      }
+    }
+  ],
+  "transports": [
+    {
+      "type": "stdio"
+    }
+  ],
+  "capabilities": {
+    "tools": true,
+    "resources": false,
+    "prompts": false
+  }
+}

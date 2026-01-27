@@ -1,7 +1,7 @@
 // PR Agent - Basic Types
 // Core types for PR analysis
 
-export type AIProviderType = 'anthropic' | 'openai' | 'google';
+export type AIProviderType = 'anthropic' | 'openai' | 'google' | 'zhipu';
 
 export interface PRInfo {
   number: number;

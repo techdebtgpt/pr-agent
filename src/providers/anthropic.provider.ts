@@ -30,7 +30,8 @@ export class AnthropicProvider implements ILLMProvider {
       apiKey: this.apiKey,
       modelName: config.model || this.getDefaultModel(),
       temperature: config.temperature ?? 0.2,
-      maxTokens: config.maxTokens ?? 4000,
+      maxTokens: config.maxTokens ?? 50000,
+      streaming: true,
     });
   }
 }

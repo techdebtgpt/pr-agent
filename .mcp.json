@@ -1,0 +1,36 @@
+{
+  "$schema": "https://github.com/modelcontextprotocol/specification/blob/main/schema/mcp.schema.json",
+  "$comment": "===== PR Agent: CLI Tool + MCP Server =====",
+  "$comment2": "This repository is primarily a CLI tool (pr-agent) for analyzing pull requests.",
+  "$comment3": "It also includes an MCP server (src/mcp/) that exposes the same functionality via MCP.",
+  "$comment4": "",
+  "$comment5": "Setup: npm install --legacy-peer-deps && npm run build",
+  "$comment6": "",
+  "$comment7": "Available MCP Tools (see server.json for full schemas):",
+  "$comment8": "  • analyze - Analyze PR/branch changes with diff parsing, risk detection, complexity scoring, Jira ticket extraction",
+  "$comment9": "  • dashboard - Start web dashboard to view analysis history, code quality trends, and ROI metrics",
+  "$comment10": "",
+  "$comment11": "The MCP server imports and reuses the CLI's PRAnalyzerAgent and analysis tools.",
+  "$comment12": "",
+  "$comment13": "===== Required MCP Servers for Full Functionality =====",
+  "$comment14": "The Atlassian Rovo MCP Server provides Jira/Confluence access via OAuth (requires Node.js 18+)",
+  "$comment15": "GitHub MCP server enables repository and PR management",
+  "$comment16": "The PR Agent extracts Jira ticket IDs, then uses the Atlassian MCP server to fetch ticket details.",
+  "mcpServers": {
+    "pr-agent": {
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "env": {
+        "NODE_ENV": "development"
+      }
+    },
+    "atlassian": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "mcp-remote", "https://mcp.atlassian.com/v1/mcp"]
+    },
+    "github": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-github"]
+    }
+  }
+}

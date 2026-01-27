@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { PRAnalyzerAgent } from './agents/pr-analyzer-agent.js';
+import { ExecutionMode } from './types/agent.types.js';
 async function run() {
     try {
         // Get provider configuration from environment
@@ -38,13 +39,19 @@ async function run() {
         // Use LangChain PRAnalyzerAgent
         core.info('Running LangChain agent analysis...');
         const agent = new PRAnalyzerAgent({
+            mode: ExecutionMode.EXECUTE, // GitHub Action always executes with API key
             provider,
             apiKey,
             model,
         });
         // Analyze with the LangChain agent
         core.info('Parsing diff and analyzing...');
-        const result = await agent.analyze(diff, pr.title);
+        const analysisResult = await agent.analyze(diff, pr.title);
+        // Type guard: GitHub Action always uses EXECUTE mode
+        if (analysisResult.mode === 'prompt_only') {
+            throw new Error('Unexpected prompt-only result in GitHub Action EXECUTE mode');
+        }
+        const result = analysisResult;
         core.info(`Analysis complete: ${result.fileAnalyses.size} files analyzed`);
         // Format for quick reading (1 minute scan)
         let summary = '';

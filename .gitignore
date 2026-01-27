@@ -5,6 +5,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+
+# Claude Code temporary files
+tmpclaude-*
+nul
+.claude/
 # Ignore Visual Studio files
 .vs/
 *.vsidx
@@ -164,6 +169,22 @@ dist/*
 !dist/providers/**
 !dist/types/
 !dist/types/**
+!dist/mcp/
+!dist/mcp/**
 
 # ArchDoc configuration (contains API keys)
 .archdoc.config.json
+
+# SQLite database (local analysis history)
+pr-agent.db
+*.db
+
+# Local MCP configuration override (optional - for user-specific settings)
+# Note: The project .mcp.json is tracked for team-wide configuration
+.mcp.local.json
+*.db
+
+# Temporary test output and analysis files
+*-output.txt
+*-output-*.txt
+*-snapshot.txt

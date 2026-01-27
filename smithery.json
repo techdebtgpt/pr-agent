@@ -1,0 +1,53 @@
+{
+  "$schema": "https://smithery.ai/schema/mcp-server.json",
+  "name": "@techdebtgpt/pr-agent",
+  "version": "1.0.0",
+  "description": "AI-powered pull request analyzer - parses diffs, detects security risks, calculates complexity, and integrates with Jira for peer review validation",
+  "author": "TechDebtGPT",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/techdebtgpt/pr-agent",
+  "homepage": "https://github.com/techdebtgpt/pr-agent#mcp-server",
+  "categories": [
+    "developer-tools",
+    "code-review",
+    "git"
+  ],
+  "tags": [
+    "pr",
+    "pull-request",
+    "code-review",
+    "git",
+    "diff",
+    "analysis",
+    "security",
+    "jira",
+    "peer-review"
+  ],
+  "runtime": "node",
+  "transport": "stdio",
+  "command": "npx",
+  "args": ["-y", "@techdebtgpt/pr-agent", "mcp"],
+  "tools": [
+    {
+      "name": "analyze",
+      "description": "Analyze PR/branch changes with risk detection and complexity scoring"
+    },
+    {
+      "name": "dashboard",
+      "description": "Start web dashboard for analysis history and metrics"
+    }
+  ],
+  "configuration": {
+    "properties": {
+      "GIT_DEFAULT_BRANCH": {
+        "type": "string",
+        "description": "Default branch to compare against (e.g., origin/main)",
+        "default": "origin/main"
+      }
+    },
+    "required": []
+  },
+  "requirements": {
+    "node": ">=18.0.0"
+  }
+}
